@@ -97,7 +97,7 @@ export function buildCreator(input: CreatorInput): Creator {
   const momentum = momentumOf(maturePosts(posts, input.platform, input.now));
   const reach = avgViews !== null && followers ? avgViews / followers : null;
   const daysSinceLastPost = daysSince(posts[0]?.date ?? null, input.now);
-  const business = looksLikeBusiness(bio, { seller: input.seller });
+  const business = looksLikeBusiness(bio, { seller: input.seller, name: input.name });
   const gender = guessGender({ name: input.name || input.handle, bio, business });
 
   return {

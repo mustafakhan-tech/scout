@@ -31,7 +31,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ platform
     if (state.status === "failed") return NextResponse.json({ status: "failed", creators: [], message: state.message } satisfies JobResponse);
 
     if (stage === "discover") {
-      const found = discover(platform, state.items, limit);
+      const found = discover(platform, state.items, limit, region);
       if (found.handles.length === 0 && platform === "tiktok") {
         return NextResponse.json({ status: "done", creators: [], message: "No TikTok videos came back for this niche." } satisfies JobResponse);
       }
@@ -44,7 +44,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ platform
     let hints: Record<string, string> = {};
     if (platform === "tiktok" && from && RUN_ID.test(from)) {
       const origin = await runItems(from, env).catch(() => null);
-      if (origin?.status === "done") hints = discover("tiktok", origin.items, 50).countries;
+      if (origin?.status === "done") hints = discover("tiktok", origin.items, 50, region).countries;
     }
     return NextResponse.json({ status: "done", creators: normalize(platform, state.items, hints) } satisfies JobResponse);
   } catch (e) {

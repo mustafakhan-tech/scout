@@ -26,8 +26,11 @@ export function bioMentionsManager(text: string): boolean {
 const BUSINESS_RE =
   /(free shipping|shop now|shop (our|the) (new|latest|collection)|order (now|below|bellow|here|online)|dm (us )?to order|tap (the )?link to shop|we (sell|ship|deliver)\b|our (store|shop|products)\b|wholesale|official (store|shop|account|page)\b|\bLLC\b|\bInc\.(?=\s|$)|\bLtd\b|get a quote)/i;
 
-export function looksLikeBusiness(bio: string, flags: { seller?: boolean } = {}): boolean {
-  return Boolean(flags.seller) || BUSINESS_RE.test(bio);
+/** Words in an account's display name that mean a shop, not a person: "Lilly Collection", "Baba Ladies Fashions". */
+const BUSINESS_NAME_RE = /\b(boutique|collections?|clothing|apparel|wholesale|fashions|outlet|enterprises?|ventures|trading|store)\b/i;
+
+export function looksLikeBusiness(bio: string, flags: { seller?: boolean; name?: string } = {}): boolean {
+  return Boolean(flags.seller) || BUSINESS_RE.test(bio) || BUSINESS_NAME_RE.test(flags.name ?? "");
 }
 
 function median(xs: number[]): number | null {

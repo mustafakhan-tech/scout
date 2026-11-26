@@ -23,3 +23,10 @@ test("no false matches inside words", () => {
   assert.equal(countryFromBio("Paris Hilton fan"), "FR"); // known limit: names that are also places
   assert.equal(countryFromBio(""), null);
 });
+
+test("captions: places inside hashtags count", async () => {
+  const { countryFromText } = await import("./place.ts");
+  assert.equal(countryFromText("fit check #southafricantiktok #fyp"), "ZA");
+  assert.equal(countryFromText("night out in Kampala"), "UG");
+  assert.equal(countryFromText("#fyp #ootd"), null);
+});

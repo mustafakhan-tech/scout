@@ -151,6 +151,8 @@ export default function Home() {
       gender: f.gender,
       includeUnknownGender: f.includeUnknownGender,
       countries: region ? [region] : [],
+      // Searching a region means "only people from there"; creators with no country stay one click away.
+      includeUnknownCountry: !region,
     }));
     try {
       const res = await fetch("/api/search", {

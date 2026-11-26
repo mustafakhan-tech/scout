@@ -5,7 +5,8 @@
 
 /** Places people write in bios, by ISO-2 country. Matched as whole words, case-insensitive. */
 const PLACES: Record<string, string[]> = {
-  ZA: ["south africa", "southafrica", "mzansi", "joburg", "jozi", "johannesburg", "cape town", "capetown", "durban", "pretoria", "soweto", "sandton", "gauteng", "kzn", "port elizabeth", "gqeberha", "bloemfontein", "polokwane", "east london", "stellenbosch", "rsa"],
+  UG: ["uganda", "ugandan", "kampala", "entebbe", "wandegeya"],
+  ZA: ["south africa", "southafrica", "mzansi", "joburg", "jozi", "johannesburg", "cape town", "capetown", "durban", "pretoria", "soweto", "sandton", "gauteng", "kzn", "port elizabeth", "gqeberha", "bloemfontein", "polokwane", "east london", "stellenbosch", "rsa", "south african", "south africans", "southafrican"],
   NG: ["nigeria", "naija", "lagos", "abuja", "port harcourt", "ibadan", "enugu"],
   GH: ["ghana", "accra", "kumasi"],
   KE: ["kenya", "nairobi", "mombasa"],
@@ -65,5 +66,24 @@ export function countryFromBio(bio: string): string | null {
   }
   if (named.length > 0) return named.at(-1)!.code;
   if (flags.length > 0) return flags.at(-1)!;
+  return null;
+}
+
+/** Place words long enough to find inside a hashtag: #southafricantiktok, #joburgfashion. */
+const HASHTAG_PLACES = Object.entries(PLACES).map(
+  ([code, words]) => [code, words.map((w) => w.replace(/\s+/g, "")).filter((w) => w.length >= 5)] as const,
+);
+
+/**
+ * The country a post's caption points to: a place or flag in the text, else a place inside a hashtag.
+ * Captions are noisier than bios, so where the video was posted and the bio both win over this.
+ */
+export function countryFromText(text: string): string | null {
+  if (!text) return null;
+  const direct = countryFromBio(text);
+  if (direct) return direct;
+  const tags = (text.toLowerCase().match(/#[\p{L}\p{N}_]+/gu) ?? []).join(" ");
+  if (!tags) return null;
+  for (const [code, words] of HASHTAG_PLACES) if (words.some((w) => tags.includes(w))) return code;
   return null;
 }

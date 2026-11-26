@@ -303,3 +303,35 @@ test("TikTok creators get a country from their bio when the platform gives none"
   assert.equal(out[0].gender, "woman");
   assert.equal(out[0].genderSource, "pronouns");
 });
+
+test("TikTok discovery with a region keeps local creators first and drops shops and other countries", () => {
+  const v = (name: string, plays: number, extra: Record<string, unknown> = {}, meta: Record<string, unknown> = {}) =>
+    ({ authorMeta: { name, nickName: name, ...meta }, playCount: plays, text: "", ...extra });
+  const items = [
+    v("ugshop", 9e6, { locationCreated: "UG" }),
+    v("thandi", 1000, {}, { signature: "Joburg girl 🇿🇦" }),
+    v("lerato", 500, { text: "outfit check #southafricantiktok" }),
+    v("unknown", 800),
+    v("boutique", 5e6, {}, { nickName: "Glam Boutique", signature: "Cape Town" }),
+    v("ghana", 2e6, {}, { signature: "Accra 🇬🇭" }),
+  ];
+  const d = discoverTikTok(items, 3, "ZA");
+  assert.deepEqual(d.handles, ["thandi", "lerato", "unknown"]);
+  assert.equal(d.countries.thandi, "ZA");
+  assert.equal(d.countries.lerato, "ZA");
+  assert.equal(d.countries.unknown, undefined);
+});
+
+test("TikTok regional discovery searches the country name and local hashtags", () => {
+  const input = buildInput("tiktok", "discover", { query: "fashion", limit: 10, region: "ZA" });
+  assert.deepEqual(input.searchQueries, ["fashion South Africa"]);
+  assert.deepEqual(input.hashtags, ["fashionsouthafrica", "southafricafashion"]);
+  assert.equal(input.proxyCountryCode, "ZA");
+});
+
+test("shop-style display names count as businesses", async () => {
+  const { looksLikeBusiness } = await import("./signals.ts");
+  assert.ok(looksLikeBusiness("", { name: "LILLY YAYRA COLLECTION 👗" }));
+  assert.ok(looksLikeBusiness("", { name: "Baba ladies fashions" }));
+  assert.ok(!looksLikeBusiness("", { name: "Nthabiseng Karrim" }));
+});

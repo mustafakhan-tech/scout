@@ -1,5 +1,8 @@
 import { buildCreator, dedupe, mode, toNum, type PostInput } from "./metrics.ts";
 import type { Creator, JobStage, Platform } from "./types.ts";
+import { countryFromBio, countryFromText } from "./place.ts";
+import { looksLikeBusiness } from "./signals.ts";
+import { countryName } from "./countries.ts";
 
 const API = "https://api.apify.com/v2";
 const RECENT_POSTS = 8;
@@ -73,7 +76,19 @@ export function buildInput(platform: Platform, stage: JobStage, o: StageOptions,
     // TikTok shows search results for the country it thinks you're in, so a regional proxy localises them.
     const where = o.region ? { proxyCountryCode: o.region } : {};
     if (stage === "discover") {
-      return { searchQueries: [o.query], searchSection: "/video", resultsPerPage: Math.min(o.limit * 3, 150), ...where, ...noDownloads };
+      if (!o.region) return { searchQueries: [o.query], searchSection: "/video", resultsPerPage: Math.min(o.limit * 3, 150), ...noDownloads };
+      // A proxy alone barely changes TikTok's results, so also search the niche with the country's name
+      // and the hashtags local creators use (#fashionsouthafrica). Discovery then keeps local authors first.
+      const joined = hashtagsFor(o.query ?? "")[0];
+      const tags = hashtagsFor(o.query ?? "", o.region).filter((t) => t !== joined).slice(0, 2);
+      return {
+        searchQueries: [`${o.query} ${countryName(o.region)}`],
+        hashtags: tags,
+        searchSection: "/video",
+        resultsPerPage: Math.min(Math.ceil(o.limit * 1.5), 60),
+        ...where,
+        ...noDownloads,
+      };
     }
     return { profiles: o.handles, profileScrapeSections: ["videos"], resultsPerPage: RECENT_TIKTOK, profileSorting: "latest", excludePinnedPosts: true, ...where, ...noDownloads };
   }
@@ -155,15 +170,37 @@ function rankAuthors(entries: Array<{ handle: string; plays: number }>, limit: n
     .map(([h]) => h);
 }
 
-export function discoverTikTok(items: unknown[], limit: number): Discovery {
+export function discoverTikTok(items: unknown[], limit: number, region: string | null = null): Discovery {
   const rows = (items as Rec[]).filter((v) => v?.authorMeta?.name && !v.authorMeta.privateAccount);
-  const handles = rankAuthors(rows.map((v) => ({ handle: v.authorMeta.name, plays: toNum(v.playCount) ?? 0 })), limit);
+  const byAuthor = new Map<string, Rec[]>();
+  for (const v of rows) byAuthor.set(v.authorMeta.name, [...(byAuthor.get(v.authorMeta.name) ?? []), v]);
+
+  // Where each author is, from the best evidence available: where the video was posted,
+  // then the bio, then places in their captions and hashtags.
   const countries: Record<string, string> = {};
-  for (const h of handles) {
-    const c = mode(rows.filter((v) => v.authorMeta.name === h).map((v) => v.locationCreated));
+  const shops = new Set<string>();
+  for (const [h, vids] of byAuthor) {
+    const meta = vids[0].authorMeta;
+    const c = mode(vids.map((v) => v.locationCreated)) ?? countryFromBio(meta.signature ?? "") ?? mode(vids.map((v) => countryFromText(v.text ?? "")));
     if (c) countries[h] = c;
+    if (looksLikeBusiness(meta.signature ?? "", { seller: meta.ttSeller === true, name: meta.nickName ?? meta.nickname ?? "" })) shops.add(h);
   }
-  return { handles, countries };
+
+  const entries = (keep: (h: string) => boolean) =>
+    rows.filter((v) => keep(v.authorMeta.name)).map((v) => ({ handle: v.authorMeta.name, plays: toNum(v.playCount) ?? 0 }));
+  const people = (h: string) => !shops.has(h);
+  let handles: string[];
+  if (region) {
+    // Creators who are clearly from the region first, then ones who could be; never ones from elsewhere.
+    const local = rankAuthors(entries((h) => people(h) && countries[h] === region), limit);
+    const maybe = rankAuthors(entries((h) => people(h) && !countries[h]), limit - local.length);
+    handles = [...local, ...maybe];
+  } else {
+    handles = rankAuthors(entries(people), limit);
+  }
+  // Only a couple of shops in the results? Better than nothing.
+  if (handles.length === 0) handles = rankAuthors(entries(() => true), limit);
+  return { handles, countries: Object.fromEntries(handles.filter((h) => countries[h]).map((h) => [h, countries[h]])) };
 }
 
 export function discoverInstagram(items: unknown[], limit: number): Discovery {
@@ -174,8 +211,8 @@ export function discoverInstagram(items: unknown[], limit: number): Discovery {
   };
 }
 
-export function discover(platform: Platform, items: unknown[], limit: number): Discovery {
-  return platform === "tiktok" ? discoverTikTok(items, limit) : discoverInstagram(items, limit);
+export function discover(platform: Platform, items: unknown[], limit: number, region: string | null = null): Discovery {
+  return platform === "tiktok" ? discoverTikTok(items, limit, region) : discoverInstagram(items, limit);
 }
 
 /* ---------- profiles: how they perform now ---------- */
@@ -212,7 +249,7 @@ export function normalizeTikTok(items: unknown[], hints: Record<string, string> 
       contactText: typeof meta.bioLink === "string" ? meta.bioLink : meta.bioLink?.link ?? "",
       country,
       countrySource: "posts",
-      language: mode(videos.map((v) => v.textLanguage)),
+      language: mode(videos.map((v) => v.textLanguage).filter((l) => l && l !== "un")),
       followers: toNum(meta.fans),
       posts,
       verified: meta.verified,
