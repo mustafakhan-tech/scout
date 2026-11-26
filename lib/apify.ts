@@ -106,6 +106,16 @@ export function buildInput(platform: Platform, stage: JobStage, o: StageOptions,
   return { search: o.query, searchType: env.APIFY_INSTAGRAM_SEARCH_TYPE || "user", searchLimit: Math.min(o.limit, 250), resultsType: "details", resultsLimit: RECENT_POSTS };
 }
 
+/** Apify's own wording for an empty account is long and points at upgrading; say what it means here. */
+export function friendlyApifyError(message: string): string {
+  const left = /remaining usage of \$([\d.]+)/i.exec(message);
+  if (left || /not enough|exceeded.*(usage|limit)|monthly usage/i.test(message)) {
+    const amount = left ? ` (${"$"}${Number(left[1]).toFixed(2)} left)` : "";
+    return `Your Apify credit for this month is used up${amount}, so this platform can't search until it renews. Add credit at console.apify.com/billing, or search YouTube, which is free.`;
+  }
+  return message;
+}
+
 async function apify<T>(path: string, token: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API}${path}`, {
     ...init,
@@ -113,7 +123,7 @@ async function apify<T>(path: string, token: string, init?: RequestInit): Promis
     cache: "no-store",
   });
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body?.error?.message || `Apify returned ${res.status}`);
+  if (!res.ok) throw new Error(friendlyApifyError(body?.error?.message || `Apify returned ${res.status}`));
   return body as T;
 }
 

@@ -335,3 +335,10 @@ test("shop-style display names count as businesses", async () => {
   assert.ok(looksLikeBusiness("", { name: "Baba ladies fashions" }));
   assert.ok(!looksLikeBusiness("", { name: "Nthabiseng Karrim" }));
 });
+
+test("Apify out-of-credit errors read plainly", async () => {
+  const { friendlyApifyError } = await import("./apify.ts");
+  const m = friendlyApifyError("Your remaining usage of $0.456089 this billing cycle isn't enough for this run. Increase your limit by upgrading");
+  assert.match(m, /credit for this month is used up \(\$0\.46 left\)/);
+  assert.equal(friendlyApifyError("Actor not found"), "Actor not found");
+});

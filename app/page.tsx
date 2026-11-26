@@ -413,7 +413,11 @@ export default function Home() {
       {creators.length === 0 && !searching && running.length === 0 ? (
         <section className="empty">
           {searchedFor ? (
-            <p>No creators came back for &ldquo;{searchedFor}&rdquo;. Try a broader niche, or another platform.</p>
+            notes.length > 0 ? (
+              <p>The search for &ldquo;{searchedFor}&rdquo; didn&rsquo;t run. The message above says why.</p>
+            ) : (
+              <p>No creators came back for &ldquo;{searchedFor}&rdquo;. Try a broader niche, or another platform.</p>
+            )
           ) : (
             <>
               <p className="empty-lead">Search a niche to start a shortlist.</p>

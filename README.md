@@ -36,7 +36,7 @@ Every creator in Scout has a **Check a deal** button that opens it prefilled. Th
 
 ## What it does
 
-- **Searches by niche** on one, two or all three platforms, with an optional region. Picking a region runs TikTok's search through a connection in that country and points Instagram at local hashtags (for South Africa: #fashionsouthafrica, #safashion and similar), then keeps only creators from there.
+- **Searches by niche** on one, two or all three platforms, with an optional region. Picking a region searches TikTok for the niche plus the country's name and its local hashtags, through a connection in that country, and points Instagram at local hashtags (for South Africa: #fashionsouthafrica, #southafricafashion). Before paying to read profiles, Scout drops shops and anyone placed in another country, and profiles creators clearly from the region first. Results then show only creators from there; ones with no country listed are one checkbox away.
 - **Reads where a creator is from.** When a platform doesn't say, Scout reads the bio for flags, cities and "based in" lines (🇿🇦, Joburg, Cape Town, Mzansi) and marks the country "from bio".
 - **Filters by gender.** Scout estimates gender from pronouns in the bio, then words like "mom" or "girl dad", then the first name. It never looks at photos. Business accounts and unclear names stay "can't tell", and you can correct any creator by hand.
 - **Measures recent performance.** Scout reads each creator's latest posts (10 on YouTube, 8 on Instagram, 6 on TikTok) and averages their views, likes and comments, so you're comparing how accounts perform now, not just how big they are.
