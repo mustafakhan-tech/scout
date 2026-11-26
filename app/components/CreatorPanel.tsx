@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { countryName, flag, languageName } from "@/lib/countries.ts";
 import { ago, compact, pct, times, type ErBasis } from "@/lib/filters.ts";
 import { outreachMessage, type Sender } from "@/lib/outreach.ts";
-import { MATURE_DAYS, performanceMetric, REACH_PAR, RISING } from "@/lib/signals.ts";
+import { MATURE_DAYS, maturePosts, performanceMetric, REACH_PAR, RISING } from "@/lib/signals.ts";
 import { PLATFORM_LABEL, type Creator } from "@/lib/types.ts";
 
 const SENDER_STORE = "scout-sender";
@@ -13,8 +13,8 @@ export function explainBreakout(c: Creator): string[] {
   const out: string[] = [];
   const unit = performanceMetric(c.posts) ?? "views";
   if (c.momentum !== null) {
-    if (c.momentum >= 1.15) out.push(`Their 3 newest posts are getting ${times(c.momentum)} the ${unit} of the posts before them.`);
-    else if (c.momentum <= 0.85) out.push(`Their 3 newest posts are getting ${times(c.momentum)} the ${unit} of the posts before them, so things are cooling off.`);
+    if (c.momentum >= 1.15) out.push(`Their most recent posts are getting ${times(c.momentum)} the ${unit} of the posts before them.`);
+    else if (c.momentum <= 0.85) out.push(`Their most recent posts are getting ${times(c.momentum)} the ${unit} of the posts before them, so things are cooling off.`);
     else out.push(`Their newest posts are performing about the same as the ones before.`);
   }
   if (c.reach !== null) {
@@ -75,6 +75,9 @@ export default function CreatorPanel({ creator: c, niche, basis, starred, onTogg
 
   // Chart: oldest to newest, so momentum reads left to right.
   const chartPosts = [...c.posts].reverse();
+  const settled = maturePosts(c.posts, c.platform);
+  const compared = new Set(c.momentum === null ? [] : settled.slice(0, 3));
+  const fresh = new Set(c.posts.filter((p) => !settled.includes(p)));
   const useViews = performanceMetric(c.posts) !== "likes";
   const val = (p: (typeof chartPosts)[number]) => (useViews ? p.views : p.likes) ?? 0;
   const peak = Math.max(1, ...chartPosts.map(val));
@@ -134,10 +137,17 @@ export default function CreatorPanel({ creator: c, niche, basis, starred, onTogg
         {chartPosts.length > 0 && (
           <section className="panel-section">
             <h3>Recent posts</h3>
-            <p className="rh-hint">{useViews ? "Views" : "Likes"} per post, oldest to newest. The 3 newest are in blue, because those are what the breakout score compares against the rest. Outlined bars are sponsored posts.</p>
+            <p className="rh-hint">
+              {useViews ? "Views" : "Likes"} per post, oldest to newest. Blue bars are the posts the breakout score compares against the older ones
+              {fresh.size > 0 && `, pale bars are under ${MATURE_DAYS[c.platform]} days old and still collecting ${useViews ? "views" : "likes"}`}. Outlined bars are sponsored.
+            </p>
             <div className="post-chart" role="img" aria-label={`${useViews ? "Views" : "Likes"} on the last ${chartPosts.length} posts, oldest to newest: ${chartPosts.map((p) => compact(val(p))).join(", ")}`}>
               {chartPosts.map((p, i) => (
-                <span key={i} className={p.sponsored ? "ad" : undefined} style={{ height: `${Math.max(3, (val(p) / peak) * 100)}%` }} />
+                <span
+                  key={i}
+                  className={[p.sponsored && "ad", compared.has(p) && "recent", fresh.has(p) && "fresh"].filter(Boolean).join(" ") || undefined}
+                  style={{ height: `${Math.max(3, (val(p) / peak) * 100)}%` }}
+                />
               ))}
             </div>
             <ol className="post-list">

@@ -3,6 +3,8 @@ import type { Creator, JobStage, Platform } from "./types.ts";
 
 const API = "https://api.apify.com/v2";
 const RECENT_POSTS = 8;
+/** TikTok charges per video scraped, so read fewer. 6 still leaves 4+ settled posts for momentum. */
+const RECENT_TIKTOK = 6;
 
 type Env = Record<string, string | undefined>;
 type Rec = Record<string, any>;
@@ -44,7 +46,7 @@ export function buildInput(platform: Platform, stage: JobStage, o: StageOptions,
     if (stage === "discover") {
       return { searchQueries: [o.query], searchSection: "/video", resultsPerPage: Math.min(o.limit * 3, 90), ...noDownloads };
     }
-    return { profiles: o.handles, profileScrapeSections: ["videos"], resultsPerPage: RECENT_POSTS, profileSorting: "latest", excludePinnedPosts: true, ...noDownloads };
+    return { profiles: o.handles, profileScrapeSections: ["videos"], resultsPerPage: RECENT_TIKTOK, profileSorting: "latest", excludePinnedPosts: true, ...noDownloads };
   }
   if (stage === "discover") {
     return {
@@ -160,7 +162,7 @@ export function normalizeTikTok(items: unknown[], hints: Record<string, string> 
     byAuthor.set(handle, entry);
   }
   const creators = [...byAuthor.entries()].map(([handle, { meta, videos }]) => {
-    const posts: PostInput[] = videos.slice(0, RECENT_POSTS).map((v) => ({
+    const posts: PostInput[] = videos.slice(0, RECENT_TIKTOK).map((v) => ({
       views: toNum(v.playCount),
       likes: toNum(v.diggCount),
       comments: toNum(v.commentCount),

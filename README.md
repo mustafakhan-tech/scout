@@ -4,6 +4,10 @@
 
 Live: https://scout-hazel-theta.vercel.app (sample mode for visitors)
 
+![Scout results for "home espresso" in sample mode, ranked by breakout score](docs/scout-results.png)
+
+![A creator's detail panel: breakout score with its explanation, recent-post chart and a drafted first message](docs/scout-creator.png)
+
 Built by Mustafa Khan for scouting creators at Nexus Partners, and for any brand that wants to find creators without paying for a full influencer platform.
 
 ## Why it exists
@@ -20,7 +24,7 @@ Tools like Modash and HypeAuditor are built around huge creator databases, and t
 ## What it does
 
 - **Searches by niche** on one, two or all three platforms, with an optional region.
-- **Measures recent performance.** Scout reads each creator's latest posts (10 on YouTube, 8 on Instagram and TikTok) and averages their views, likes and comments, so you're comparing how accounts perform now, not just how big they are.
+- **Measures recent performance.** Scout reads each creator's latest posts (10 on YouTube, 8 on Instagram, 6 on TikTok) and averages their views, likes and comments, so you're comparing how accounts perform now, not just how big they are.
 - **Gives two engagement rates.** Likes plus comments per post, divided either by followers (the usual Instagram measure) or by views (better for TikTok and YouTube, where reach doesn't depend on followers).
 - **Puts a histogram on every filter.** Each slider shows how the current results are spread out, so you can see where the mid-tier creators cluster before you set a range.
 - **Works out CPM.** Enter a fee per post and every creator gets a cost per 1,000 views.
@@ -44,8 +48,15 @@ YouTube searches return in a few seconds. Instagram and TikTok start an Apify ru
 
 ## Costs
 
-- **YouTube:** free. The default quota is 10,000 units a day, and search calls draw on that quota.
-- **Apify:** the free plan includes $5 of usage a month. These actors charge roughly $2–3 per 1,000 results. Every run is capped at `APIFY_MAX_CHARGE_USD` (50¢ by default).
+Measured on real searches, 10 creators per platform:
+
+| Platform | Cost per search | Time |
+|---|---|---|
+| YouTube | Free (about 130 of the 10,000 daily quota units) | 2–3 seconds |
+| Instagram | about $0.08 | about 1 minute |
+| TikTok | about $0.30 | about 1 minute |
+
+Apify's free plan includes $5 of usage a month, which covers roughly 12–15 full three-platform searches. Each Apify run is capped at `APIFY_MAX_CHARGE_USD` (50¢ by default), so a bad input can't run up a bill.
 
 ## Setup
 

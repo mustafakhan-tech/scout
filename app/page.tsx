@@ -587,7 +587,7 @@ export default function Home() {
               {visible.length === 0 && creators.length > 0 && <p className="none">No creators match these filters. Turn off a &ldquo;Scout for&rdquo; filter or widen a range.</p>}
             </div>
             <p className="footnote">
-              Averages use each creator&rsquo;s most recent posts (up to 10 on YouTube, 8 on Instagram and TikTok). Breakout compares their 3 newest posts with the ones before and checks views against followers. 50 means typical, {RISING} or more means rising. Brand deals counts posts marked as ads or with sponsor language in the caption. CPM is your fee divided by average views, per thousand views.
+              Averages use each creator&rsquo;s most recent posts (up to 10 on YouTube, 8 on Instagram, 6 on TikTok). Breakout compares their 3 newest posts with the ones before and checks views against followers. 50 means typical, {RISING} or more means rising. Brand deals counts posts marked as ads or with sponsor language in the caption. CPM is your fee divided by average views, per thousand views.
             </p>
           </main>
         </div>
