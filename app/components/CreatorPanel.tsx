@@ -41,9 +41,12 @@ interface Props {
   onSetGender: (g: Gender | null) => void;
   /** Scout's own estimate, before any correction */
   estimated: Gender;
+  /** For quick-scan creators: read their latest videos */
+  onAnalyze?: () => void;
+  analyzing?: boolean;
 }
 
-export default function CreatorPanel({ creator: c, niche, basis, starred, onToggleStar, onClose, onSetGender, estimated }: Props) {
+export default function CreatorPanel({ creator: c, niche, basis, starred, onToggleStar, onClose, onSetGender, estimated, onAnalyze, analyzing }: Props) {
   const closeRef = useRef<HTMLButtonElement>(null);
   const [sender, setSender] = useState<Sender>({ name: "", company: "" });
   const [copied, setCopied] = useState(false);
@@ -123,24 +126,37 @@ export default function CreatorPanel({ creator: c, niche, basis, starred, onTogg
           )}
         </div>
 
-        <section className="panel-score" aria-label="Breakout score">
-          <div className={`score${rising ? " score-rising" : ""}`}>
-            <span className="score-n">{c.breakout ?? "–"}</span>
-            <span className="score-label">{c.breakout === null ? "Not enough posts to score" : rising ? "Breakout score: rising" : "Breakout score"}</span>
-          </div>
-          <ul className="explain">
-            {explainBreakout(c).map((s) => <li key={s}>{s}</li>)}
-          </ul>
-        </section>
+        {c.preview ? (
+          <section className="panel-score panel-scan" aria-label="Quick scan">
+            <p>
+              <strong>Quick scan.</strong> Followers are from their profile. Views, likes and engagement come from the {c.posts.length} niche video{c.posts.length === 1 ? "" : "s"} Scout found, which are usually their better ones. Analyze to read their latest 6 videos for a breakout score, brand deals and true averages.
+            </p>
+            {onAnalyze && (
+              <button type="button" className="btn btn-primary" onClick={onAnalyze} disabled={analyzing}>
+                {analyzing ? "Analyzing…" : "Analyze this creator · about 2¢"}
+              </button>
+            )}
+          </section>
+        ) : (
+          <section className="panel-score" aria-label="Breakout score">
+            <div className={`score${rising ? " score-rising" : ""}`}>
+              <span className="score-n">{c.breakout ?? "–"}</span>
+              <span className="score-label">{c.breakout === null ? "Not enough posts to score" : rising ? "Breakout score: rising" : "Breakout score"}</span>
+            </div>
+            <ul className="explain">
+              {explainBreakout(c).map((s) => <li key={s}>{s}</li>)}
+            </ul>
+          </section>
+        )}
 
         <dl className="facts">
           <div><dt>Followers</dt><dd>{compact(c.followers)}</dd></div>
           <div><dt>Avg views</dt><dd>{compact(c.avgViews)}</dd></div>
           <div><dt>Avg likes</dt><dd>{compact(c.avgLikes)}</dd></div>
           <div><dt>Engagement</dt><dd>{pct(er)}</dd></div>
-          <div><dt>Brand deals</dt><dd>{c.postsSampled ? `${c.brandDeals} of ${c.postsSampled} posts` : "–"}</dd></div>
+          <div><dt>Brand deals</dt><dd>{c.postsSampled && !c.preview ? `${c.brandDeals} of ${c.postsSampled} posts` : "–"}</dd></div>
           <div><dt>Manager</dt><dd>{c.managed ? "Listed in bio" : "None listed"}</dd></div>
-          <div><dt>Last post</dt><dd>{ago(c.daysSinceLastPost)}</dd></div>
+          <div><dt>Last post</dt><dd>{c.preview ? "–" : ago(c.daysSinceLastPost)}</dd></div>
           <div><dt>Posting</dt><dd>{c.postsPerWeek === null ? "–" : `${c.postsPerWeek.toFixed(1)} a week`}</dd></div>
           {c.language && <div><dt>Posts in</dt><dd>{languageName(c.language)}</dd></div>}
           <div className="fact-wide">
@@ -159,10 +175,11 @@ export default function CreatorPanel({ creator: c, niche, basis, starred, onTogg
 
         {chartPosts.length > 0 && (
           <section className="panel-section">
-            <h3>Recent posts</h3>
+            <h3>{c.preview ? "Niche videos found" : "Recent posts"}</h3>
             <p className="rh-hint">
+              {c.preview ? `${useViews ? "Views" : "Likes"} on each niche video Scout found, oldest to newest.` : <>
               {useViews ? "Views" : "Likes"} per post, oldest to newest. Blue bars are the posts the breakout score compares against the older ones
-              {fresh.size > 0 && `, pale bars are under ${MATURE_DAYS[c.platform]} days old and still collecting ${useViews ? "views" : "likes"}`}. Outlined bars are sponsored.
+              {fresh.size > 0 && `, pale bars are under ${MATURE_DAYS[c.platform]} days old and still collecting ${useViews ? "views" : "likes"}`}. Outlined bars are sponsored.</>}
             </p>
             <div className="post-chart" role="img" aria-label={`${useViews ? "Views" : "Likes"} on the last ${chartPosts.length} posts, oldest to newest: ${chartPosts.map((p) => compact(val(p))).join(", ")}`}>
               {chartPosts.map((p, i) => (

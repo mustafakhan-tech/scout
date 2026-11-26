@@ -4,16 +4,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import RangeHistogram from "./components/RangeHistogram.tsx";
 import CreatorPanel from "./components/CreatorPanel.tsx";
 import { COUNTRIES, countryName, flag, languageName } from "@/lib/countries.ts";
-import { cpm, dedupe } from "@/lib/metrics.ts";
+import { cpm, mergeCreators } from "@/lib/metrics.ts";
 import { RISING } from "@/lib/signals.ts";
-import { COST_PER_CREATOR } from "@/lib/apify.ts";
+import { ANALYZE_COST, searchCost } from "@/lib/apify.ts";
+import { CACHE_DAYS } from "@/lib/cache.ts";
 import type { Gender } from "@/lib/gender.ts";
 import {
   GENDER_LABEL, GENDER_SOURCE_LABEL,
   applyFilters, baseFilter, compact, domainOf, emptyFilters, INACTIVE_DAYS, METRICS, metricValue, money, passesSignals, pct, SCALE,
   sortCreators, toCsv, type Domain, type ErBasis, type Filters, type Metric, type Signals, type SortKey,
 } from "@/lib/filters.ts";
-import { PLATFORM_LABEL, PLATFORMS, type Creator, type Job, type JobResponse, type Platform, type SearchResponse } from "@/lib/types.ts";
+import { PLATFORM_LABEL, PLATFORMS, type Creator, type Job, type JobResponse, type Platform, type SavedResult, type SearchResponse } from "@/lib/types.ts";
 
 const KEY_STORE = "scout-key";
 const SHORTLIST_STORE = "scout-shortlist";
@@ -22,7 +23,7 @@ const POLL_MS = 5000;
 const POLL_LIMIT_MS = 8 * 60 * 1000;
 
 type Access = "sample" | "live" | "denied";
-interface JobState extends Job { status: "running" | "done" | "failed"; message?: string; startedAt: number }
+interface JobState extends Job { status: "running" | "done" | "failed"; message?: string; startedAt: number; /** Creators being analyzed, for analyze jobs */ analyzing?: number }
 interface ProviderNote { platform: Platform; message: string }
 
 function load<T>(key: string, fallback: T): T {
@@ -54,9 +55,28 @@ const SIGNAL_LABEL: Record<keyof Signals, { label: string; hint: string }> = {
 };
 const SIGNAL_ORDER: (keyof Signals)[] = ["rising", "noDeals", "noManager", "hideInactive", "hideBusiness", "hideTiny", "hideLowReach"];
 
+function ago(ms: number): string {
+  const h = Math.round((Date.now() - ms) / 3_600_000);
+  if (h < 1) return "less than an hour ago";
+  if (h < 24) return `${h} hour${h === 1 ? "" : "s"} ago`;
+  const d = Math.round(h / 24);
+  return `${d} day${d === 1 ? "" : "s"} ago`;
+}
+
+/** Sample mode shows TikTok as a quick scan too, holding back the full profile until "analyzed". */
+function asPreview(c: Creator): Creator {
+  return { ...c, preview: true, breakout: null, momentum: null, daysSinceLastPost: null, postsPerWeek: null, posts: c.posts.slice(1, 3) };
+}
+
+function cents(usd: number): string {
+  return usd < 1 ? `${Math.max(1, Math.round(usd * 100))}¢` : `$${usd.toFixed(2)}`;
+}
+
 function stageText(j: JobState): string {
   if (j.status === "failed") return j.message || "search failed.";
   if (j.status === "done") return j.message || "results are in.";
+  if (j.analyzing) return `is reading the latest videos of ${j.analyzing} creator${j.analyzing === 1 ? "" : "s"}. About a minute.`;
+  if (j.stage === "discover" && j.platform === "tiktok") return "is scanning videos about this niche for creators. About a minute.";
   return j.stage === "discover"
     ? "is finding creators who post about this niche. This takes about a minute."
     : "is reading their recent posts. Results appear here as soon as they're ready.";
@@ -82,6 +102,8 @@ export default function Home() {
   const [creators, setCreators] = useState<Creator[]>([]);
   const [jobs, setJobs] = useState<JobState[]>([]);
   const [notes, setNotes] = useState<ProviderNote[]>([]);
+  const [saved, setSaved] = useState<SavedResult[]>([]);
+  const [lastSearch, setLastSearch] = useState<{ query: string; platforms: Platform[]; region: string; limit: number } | null>(null);
   const [formError, setFormError] = useState("");
 
   // --- refine ---
@@ -137,14 +159,20 @@ export default function Home() {
     setPlatforms((cur) => (cur.includes(p) ? cur.filter((x) => x !== p) : PLATFORMS.filter((x) => x === p || cur.includes(x))));
   }
 
-  async function search(e: React.FormEvent) {
+  function search(e: React.FormEvent) {
     e.preventDefault();
     setFormError("");
     if (!query.trim()) return setFormError("Type a niche to search for, like “home espresso”.");
     if (platforms.length === 0) return setFormError("Pick at least one platform.");
+    runSearch({ query, platforms, region, limit }, false);
+  }
+
+  async function runSearch(p: { query: string; platforms: Platform[]; region: string; limit: number }, fresh: boolean) {
+    const { query, platforms, region, limit } = p;
+    setLastSearch(p);
     const seq = ++searchSeq.current;
     setSearching(true);
-    setCreators([]); setJobs([]); setNotes([]); setOpenId(null);
+    setCreators([]); setJobs([]); setNotes([]); setSaved([]); setOpenId(null);
     setFilters((f) => ({
       ...emptyFilters(platforms),
       signals: f.signals,
@@ -158,7 +186,7 @@ export default function Home() {
       const res = await fetch("/api/search", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...headers() },
-        body: JSON.stringify({ query, platforms, region: region || null, limit }),
+        body: JSON.stringify({ query, platforms, region: region || null, limit, fresh }),
       });
       const body = await res.json();
       if (seq !== searchSeq.current) return;
@@ -168,14 +196,63 @@ export default function Home() {
       }
       const data = body as SearchResponse;
       setMode(data.mode);
-      setCreators(data.creators);
+      if (data.mode === "sample") {
+        sampleFull.current = new Map(data.creators.filter((c) => c.platform === "tiktok").map((c) => [c.id, c]));
+        setCreators(data.creators.map((c) => (c.platform === "tiktok" ? asPreview(c) : c)));
+      } else {
+        setCreators(data.creators);
+      }
       setNotes(data.errors);
+      setSaved(data.saved ?? []);
       setJobs(data.jobs.map((j) => ({ ...j, status: "running", startedAt: Date.now() })));
       setSearchedFor(query.trim());
     } catch {
       if (seq === searchSeq.current) setFormError("Couldn't reach the server. Check your connection and search again.");
     } finally {
       if (seq === searchSeq.current) setSearching(false);
+    }
+  }
+
+  // Read the latest videos of TikTok creators picked from a quick scan.
+  const [analyzeError, setAnalyzeError] = useState("");
+  const sampleFull = useRef(new Map<string, Creator>());
+  const [sampleAnalyzing, setSampleAnalyzing] = useState(false);
+  async function analyze(list: Creator[]) {
+    const picked = list.filter((c) => c.preview && c.platform === "tiktok").slice(0, 50);
+    const handles = picked.map((c) => c.handle);
+    if (handles.length === 0) return;
+    setAnalyzeError("");
+    const seq = searchSeq.current;
+    if (mode === "sample") {
+      setSampleAnalyzing(true);
+      setTimeout(() => {
+        if (seq === searchSeq.current) {
+          setCreators((cur) => mergeCreators(cur, picked.map((c) => sampleFull.current.get(c.id)).filter((c): c is Creator => Boolean(c))));
+        }
+        setSampleAnalyzing(false);
+      }, 1200);
+      return;
+    }
+    try {
+      const res = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...headers() },
+        body: JSON.stringify({ handles, query: searchedFor ?? "", region: lastSearch?.region || null }),
+      });
+      const body = await res.json();
+      if (seq !== searchSeq.current) return;
+      if (!res.ok) {
+        if (res.status === 401) lock();
+        return setAnalyzeError(body.message || "Couldn't start the analysis.");
+      }
+      const data = body as SearchResponse;
+      if (data.creators.length) setCreators((cur) => mergeCreators(cur, data.creators));
+      if (data.errors.length) setAnalyzeError(data.errors[0].message);
+      if (data.jobs.length) {
+        setJobs((cur) => [...cur, ...data.jobs.map((j) => ({ ...j, status: "running" as const, startedAt: Date.now(), analyzing: j.limit }))]);
+      }
+    } catch {
+      setAnalyzeError("Couldn't reach the server. Try again.");
     }
   }
 
@@ -199,7 +276,7 @@ export default function Home() {
           const res = await fetch(`/api/jobs/${job.platform}/${job.runId}?${qs}`, { headers: headers() });
           const body = (await res.json()) as JobResponse;
           if (seq !== searchSeq.current) return;
-          if (body.creators?.length) setCreators((cur) => dedupe([...cur, ...body.creators]));
+          if (body.creators?.length) setCreators((cur) => mergeCreators(cur, body.creators));
           if (body.next) {
             const next = body.next;
             setJobs((cur) => cur.map((j) => (j.runId === job.runId ? { ...next, status: "running", startedAt: j.startedAt } : j)));
@@ -226,7 +303,8 @@ export default function Home() {
     for (const c of all) if (filters.platforms.includes(c.platform) && passesSignals(c, filters.signals)) n[c.gender]++;
     return n;
   }, [all, filters.platforms, filters.signals]);
-  const estCost = (platforms.includes("tiktok") ? limit * COST_PER_CREATOR.tiktok : 0) + (platforms.includes("instagram") ? limit * COST_PER_CREATOR.instagram : 0);
+  const estCost = (["tiktok", "instagram"] as const).filter((p) => platforms.includes(p)).reduce((sum, p) => sum + searchCost(p, limit, region || null), 0);
+
 
   const domains = useMemo(() => {
     const d = {} as Record<Metric, Domain>;
@@ -238,6 +316,12 @@ export default function Home() {
     () => sortCreators(applyFilters(all, filters, domains, basis, shortlist), sort.key, sort.dir, basis, fee),
     [all, filters, domains, basis, shortlist, sort, fee],
   );
+
+  // TikTok creators from the quick scan, not analyzed yet.
+  const previews = all.filter((c) => c.preview);
+  const previewsShown = visible.filter((c) => c.preview);
+  const previewsStarred = previews.filter((c) => shortlist.has(c.id));
+  const analyzingNow = sampleAnalyzing || jobs.some((j) => j.analyzing && j.status === "running");
 
   // What the sliders and counts are drawn from: everything except the sliders themselves.
   const pool = useMemo(() => baseFilter(all, filters, shortlist), [all, filters, shortlist]);
@@ -388,24 +472,32 @@ export default function Home() {
         <button type="submit" className="btn btn-primary" disabled={searching}>{searching ? "Searching…" : "Search"}</button>
         {access === "live" && estCost > 0 && (
           <p className={`cost-note${estCost > 1 ? " cost-high" : ""}`}>
-            Estimated Apify cost for this search: about ${estCost.toFixed(2)}
+            Estimated Apify cost: about {cents(estCost)}
             {estCost > 1 ? `, roughly ${Math.round((estCost / 5) * 100)}% of the free $5 a month. Try 10–20 per platform first.` : "."}
-            {region && platforms.includes("tiktok") ? ` TikTok searches from ${countryName(region)}.` : ""}
-            {region && platforms.includes("instagram") ? " Instagram adds local hashtags." : ""}
+            {platforms.includes("tiktok") ? ` TikTok is a quick scan; reading a creator's latest videos afterwards costs about ${cents(ANALYZE_COST)} each.` : ""}
+            {` Repeating a search within ${CACHE_DAYS} days is free.`}
           </p>
         )}
         {formError && <p className="err form-err" role="alert">{formError}</p>}
       </form>
 
-      {(jobs.length > 0 || notes.length > 0) && (
+      {(jobs.length > 0 || notes.length > 0 || saved.length > 0) && (
         <ul className="status" aria-live="polite">
           {jobs.map((j) => (
-            <li key={`${j.platform}-${j.stage}`} className={`status-${j.status}`}>
+            <li key={j.runId} className={`status-${j.status}`}>
               <strong>{PLATFORM_LABEL[j.platform]}</strong> {stageText(j)}
             </li>
           ))}
           {notes.map((n) => (
             <li key={n.platform} className="status-failed"><strong>{PLATFORM_LABEL[n.platform]}</strong> {n.message}</li>
+          ))}
+          {saved.map((sv) => (
+            <li key={`saved-${sv.platform}`} className="status-saved">
+              <strong>{PLATFORM_LABEL[sv.platform]}</strong> results are saved from {ago(sv.savedAt)}, so this search was free.{" "}
+              {lastSearch && (
+                <button type="button" className="link-btn" onClick={() => runSearch(lastSearch, true)}>Get fresh results</button>
+              )}
+            </li>
           ))}
         </ul>
       )}
@@ -575,6 +667,25 @@ export default function Home() {
               </div>
             </div>
 
+            {previews.length > 0 && (
+              <section className="scan-bar" aria-label="Quick scan">
+                <p>
+                  <strong>{previews.length} TikTok creator{previews.length === 1 ? " is" : "s are"} from the quick scan.</strong>{" "}
+                  Followers are real; views and engagement come from the niche videos Scout found. Analyze the ones worth a closer look to read their latest 6 videos for breakout score, brand deals and true average views, about {cents(ANALYZE_COST)} each.
+                </p>
+                <div className="scan-actions">
+                  <button type="button" className="btn" disabled={previewsStarred.length === 0 || analyzingNow} onClick={() => analyze(previewsStarred)}>
+                    Analyze shortlisted ({previewsStarred.length}){previewsStarred.length > 0 ? ` · ${cents(previewsStarred.length * ANALYZE_COST)}` : ""}
+                  </button>
+                  <button type="button" className="btn" disabled={previewsShown.length === 0 || analyzingNow} onClick={() => analyze(previewsShown)}>
+                    Analyze the {Math.min(previewsShown.length, 50)} shown · {cents(Math.min(previewsShown.length, 50) * ANALYZE_COST)}
+                  </button>
+                  {previewsStarred.length === 0 && <span className="muted">Star creators to analyze just those.</span>}
+                </div>
+                {analyzeError && <p className="err" role="alert">{analyzeError}</p>}
+              </section>
+            )}
+
             <div className="table-wrap">
               <table>
                 <thead>
@@ -613,6 +724,7 @@ export default function Home() {
                             <span className="handle">@{c.handle}</span>
                           </div>
                           <div className="flags">
+                            {c.preview && <span className="tag tag-scan">Quick scan</span>}
                             {rising && <span className="tag tag-rise">Rising</span>}
                             {c.managed && <span className="tag">Manager listed</span>}
                             {c.business && <span className="tag">Shop or company</span>}
@@ -637,7 +749,7 @@ export default function Home() {
                             </span>
                           )}
                         </td>
-                        <td className="num">{c.postsSampled ? <>{c.brandDeals}<span className="muted"> / {c.postsSampled}</span></> : "–"}</td>
+                        <td className="num">{c.postsSampled && !c.preview ? <>{c.brandDeals}<span className="muted"> / {c.postsSampled}</span></> : "–"}</td>
                         {fee > 0 && <td className="num">{money(cpm(fee, c.avgViews))}</td>}
                       </tr>
                     );
@@ -647,7 +759,7 @@ export default function Home() {
               {visible.length === 0 && creators.length > 0 && <p className="none">No creators match these filters. Turn off a &ldquo;Scout for&rdquo; filter or widen a range.</p>}
             </div>
             <p className="footnote">
-              Averages use each creator&rsquo;s most recent posts (up to 10 on YouTube, 8 on Instagram, 6 on TikTok). Breakout compares their 3 newest posts with the ones before and checks views against followers. 50 means typical, {RISING} or more means rising. Brand deals counts posts marked as ads or with sponsor language in the caption. CPM is your fee divided by average views, per thousand views.
+              Averages use each creator&rsquo;s most recent posts (up to 10 on YouTube, 8 on Instagram, 6 on TikTok). Breakout compares their 3 newest posts with the ones before and checks views against followers. 50 means typical, {RISING} or more means rising. Brand deals counts posts marked as ads or with sponsor language in the caption. CPM is your fee divided by average views, per thousand views. Quick-scan creators show &ldquo;–&rdquo; for breakout and brand deals until you analyze them.
             </p>
           </main>
         </div>
@@ -669,6 +781,8 @@ export default function Home() {
             });
           }}
           estimated={creators.find((c) => c.id === open.id)?.gender ?? "unknown"}
+          onAnalyze={open.preview ? () => analyze([open]) : undefined}
+          analyzing={analyzingNow}
           onClose={() => setOpenId(null)}
         />
       )}

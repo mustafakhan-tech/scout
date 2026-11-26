@@ -383,3 +383,14 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; color:
 .fact-wide { grid-column: span 2; }
 .fact-wide select { height: 32px; border: 1px solid var(--rule); border-radius: var(--radius-s); background: #fff; padding: 0 8px; font-weight: 600; }
 .fact-note { display: block; font-size: 12px; font-weight: 400; color: var(--muted); margin-top: 2px; }
+
+/* ---------- quick scan ---------- */
+.status-saved { border-left-color: var(--good) !important; }
+.status-saved .link-btn { font-size: 14px; }
+.tag-scan { border-style: dashed; border-color: var(--tt); color: var(--tt); background: transparent; }
+.scan-bar { margin: 0 0 12px; padding: 12px 14px; background: var(--sheet); border: 1px dashed var(--tt); border-radius: var(--radius-m); font-size: 14px; line-height: 1.45; }
+.scan-bar p { margin: 0 0 10px; max-width: 78ch; }
+.scan-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.scan-actions .muted { font-size: 13px; }
+.panel-scan p { margin: 0 0 12px; font-size: 14px; line-height: 1.5; }
+.panel-score.panel-scan { display: block; }

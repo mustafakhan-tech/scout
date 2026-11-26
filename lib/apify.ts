@@ -52,16 +52,37 @@ export const REGION_TAGS: Record<string, string[]> = {
   SG: ["singapore", "sg"], JP: ["japan"], KR: ["korea"],
 };
 
-/** Rough Apify cost per creator returned, from measured runs (discovery + profile scrape). */
-export const COST_PER_CREATOR: Record<"tiktok" | "instagram", number> = { tiktok: 0.033, instagram: 0.008 };
+/** Measured: clockworks/tiktok-scraper charges about $0.0037 per video it returns. */
+export const TIKTOK_PER_VIDEO = 0.0037;
+/** Measured: discovery plus profile for one Instagram creator. */
+export const INSTAGRAM_PER_CREATOR = 0.008;
 
+/** Videos a TikTok scan reads: one search, or with a region, the search plus two local hashtags. */
+export function tiktokScanVideos(limit: number, region: string | null): number {
+  return region ? 3 * Math.min(limit, 60) : Math.min(limit * 2, 150);
+}
+
+/** Expected Apify spend for one stage. TikTok profiles read RECENT_TIKTOK videos per creator. */
+export function expectedCost(platform: "tiktok" | "instagram", stage: JobStage, count: number, region: string | null = null): number {
+  if (platform === "instagram") return count * INSTAGRAM_PER_CREATOR * (stage === "discover" ? 0.35 : 0.65);
+  return (stage === "discover" ? tiktokScanVideos(count, region) : count * RECENT_TIKTOK) * TIKTOK_PER_VIDEO;
+}
+
+/** What the person pays before analyzing anyone: a TikTok scan, or a full Instagram search. */
+export function searchCost(platform: "tiktok" | "instagram", limit: number, region: string | null): number {
+  return platform === "tiktok" ? expectedCost("tiktok", "discover", limit, region) : limit * INSTAGRAM_PER_CREATOR;
+}
+
+/** Reading one TikTok creator's latest videos. */
+export const ANALYZE_COST = RECENT_TIKTOK * TIKTOK_PER_VIDEO;
+
+/** Apify refuses runs capped below $0.50. */
 export const APIFY_MIN_CAP = 0.5;
 
-/** Spend cap for one run: enough for the creators asked for, never above the account's ceiling. */
-export function runCap(platform: "tiktok" | "instagram", stage: JobStage, limit: number, ceiling: number): number {
-  const share = stage === "discover" ? 0.35 : 0.65;
-  // Apify refuses runs capped below $0.50.
-  return Math.max(APIFY_MIN_CAP, Math.min(ceiling, Math.round((0.05 + limit * COST_PER_CREATOR[platform] * share * 1.5) * 100) / 100));
+/** Spend cap for one run: half again what it should cost, never above the account's ceiling. */
+export function runCap(platform: "tiktok" | "instagram", stage: JobStage, count: number, ceiling: number, region: string | null = null): number {
+  const cap = Math.round((0.05 + expectedCost(platform, stage, count, region) * 1.5) * 100) / 100;
+  return Math.max(APIFY_MIN_CAP, Math.min(ceiling, cap));
 }
 
 /*
@@ -76,7 +97,7 @@ export function buildInput(platform: Platform, stage: JobStage, o: StageOptions,
     // TikTok shows search results for the country it thinks you're in, so a regional proxy localises them.
     const where = o.region ? { proxyCountryCode: o.region } : {};
     if (stage === "discover") {
-      if (!o.region) return { searchQueries: [o.query], searchSection: "/video", resultsPerPage: Math.min(o.limit * 3, 150), ...noDownloads };
+      if (!o.region) return { searchQueries: [o.query], searchSection: "/video", resultsPerPage: tiktokScanVideos(o.limit, null), ...noDownloads };
       // A proxy alone barely changes TikTok's results, so also search the niche with the country's name
       // and the hashtags local creators use (#fashionsouthafrica). Discovery then keeps local authors first.
       const joined = hashtagsFor(o.query ?? "")[0];
@@ -85,7 +106,7 @@ export function buildInput(platform: Platform, stage: JobStage, o: StageOptions,
         searchQueries: [`${o.query} ${countryName(o.region)}`],
         hashtags: tags,
         searchSection: "/video",
-        resultsPerPage: Math.min(Math.ceil(o.limit * 1.5), 60),
+        resultsPerPage: tiktokScanVideos(o.limit, o.region) / 3,
         ...where,
         ...noDownloads,
       };
@@ -130,7 +151,8 @@ async function apify<T>(path: string, token: string, init?: RequestInit): Promis
 export async function startRun(platform: Platform, stage: JobStage, o: StageOptions, env: Env): Promise<string> {
   const ceiling = Number(env.APIFY_MAX_CHARGE_USD || "2");
   if (platform === "youtube") throw new Error("YouTube doesn't use Apify");
-  const qs = new URLSearchParams({ maxTotalChargeUsd: String(runCap(platform, stage, o.limit, ceiling)) });
+  const count = stage === "profiles" && o.handles?.length ? o.handles.length : o.limit;
+  const qs = new URLSearchParams({ maxTotalChargeUsd: String(runCap(platform, stage, count, ceiling, o.region ?? null)) });
   const res = await apify<{ data: { id: string } }>(`/acts/${actorFor(platform, env)}/runs?${qs}`, env.APIFY_TOKEN!, {
     method: "POST",
     body: JSON.stringify(buildInput(platform, stage, o, env)),
@@ -211,6 +233,58 @@ export function discoverTikTok(items: unknown[], limit: number, region: string |
   // Only a couple of shops in the results? Better than nothing.
   if (handles.length === 0) handles = rankAuthors(entries(() => true), limit);
   return { handles, countries: Object.fromEntries(handles.filter((h) => countries[h]).map((h) => [h, countries[h]])) };
+}
+
+/**
+ * Quick-scan creators from TikTok discovery alone: follower counts and the niche videos Scout found.
+ * No extra Apify cost. Analyzing a creator later reads their latest videos for the full picture.
+ */
+export function previewTikTok(items: unknown[], limit: number, region: string | null = null, now?: number): Creator[] {
+  const { handles } = discoverTikTok(items, limit, region);
+  const rows = (items as Rec[]).filter((v) => v?.authorMeta?.name);
+  return handles.flatMap((handle) => {
+    const vids = rows.filter((v) => v.authorMeta.name === handle);
+    const meta: Rec = vids[0]?.authorMeta;
+    if (!meta) return [];
+    const bio = meta.signature ?? "";
+    // Where they posted wins; the bio is read by buildCreator; captions come last.
+    const posted = mode(vids.map((v) => v.locationCreated));
+    const fromCaptions = posted || countryFromBio(bio) ? null : mode(vids.map((v) => countryFromText(v.text ?? "")));
+    const country = posted ?? fromCaptions;
+    return [
+      buildCreator({
+        platform: "tiktok",
+        handle,
+        name: meta.nickName || meta.nickname || handle,
+        url: meta.profileUrl || `https://www.tiktok.com/@${handle}`,
+        avatar: meta.avatar ?? null,
+        bio,
+        contactText: typeof meta.bioLink === "string" ? meta.bioLink : meta.bioLink?.link ?? "",
+        country,
+        countrySource: country ? "posts" : null,
+        language: mode(vids.map((v) => v.textLanguage).filter((l) => l && l !== "un")),
+        followers: toNum(meta.fans),
+        posts: newestVideosFirst(vids).map((v) => ({
+          views: toNum(v.playCount),
+          likes: toNum(v.diggCount),
+          comments: toNum(v.commentCount),
+          date: v.createTimeISO ?? (toNum(v.createTime) ? new Date(v.createTime * 1000).toISOString() : null),
+          caption: v.text ?? "",
+          markedSponsored: v.isAd === true || v.isSponsored === true,
+          url: v.webVideoUrl ?? null,
+        })),
+        verified: meta.verified,
+        seller: meta.ttSeller === true,
+        preview: true,
+        now,
+      }),
+    ];
+  });
+}
+
+function newestVideosFirst(vids: Rec[]): Rec[] {
+  const t = (v: Rec) => Date.parse(v.createTimeISO ?? "") || (toNum(v.createTime) ?? 0) * 1000;
+  return [...vids].sort((a, b) => t(b) - t(a));
 }
 
 export function discoverInstagram(items: unknown[], limit: number): Discovery {

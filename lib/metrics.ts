@@ -61,6 +61,8 @@ export interface CreatorInput {
   verified?: boolean;
   seller?: boolean;
   sample?: boolean;
+  /** Built from a quick scan's niche posts only, not the creator's latest posts */
+  preview?: boolean;
   now?: number;
 }
 
@@ -94,9 +96,12 @@ export function buildCreator(input: CreatorInput): Creator {
   const fromBio = given || input.sample ? null : countryFromBio(bio);
   const country = given ?? fromBio;
 
-  const momentum = momentumOf(maturePosts(posts, input.platform, input.now));
+  // A quick scan only sees the posts that matched the niche, so it can't tell momentum,
+  // how recently they last posted, or how often they post.
+  const preview = Boolean(input.preview);
+  const momentum = preview ? null : momentumOf(maturePosts(posts, input.platform, input.now));
   const reach = avgViews !== null && followers ? avgViews / followers : null;
-  const daysSinceLastPost = daysSince(posts[0]?.date ?? null, input.now);
+  const daysSinceLastPost = preview ? null : daysSince(posts[0]?.date ?? null, input.now);
   const business = looksLikeBusiness(bio, { seller: input.seller, name: input.name });
   const gender = guessGender({ name: input.name || input.handle, bio, business });
 
@@ -122,7 +127,7 @@ export function buildCreator(input: CreatorInput): Creator {
     erViews,
     momentum,
     reach,
-    breakout: breakoutScore({ platform: input.platform, momentum, reach, followers, daysSinceLastPost }),
+    breakout: preview ? null : breakoutScore({ platform: input.platform, momentum, reach, followers, daysSinceLastPost }),
     brandDeals: posts.filter((p) => p.sponsored).length,
     managed: bioMentionsManager(`${bio} ${input.contactText ?? ""}`),
     business,
@@ -130,9 +135,10 @@ export function buildCreator(input: CreatorInput): Creator {
     genderSource: gender.source,
     lowReach: lowReachForSize(reach, followers),
     daysSinceLastPost,
-    postsPerWeek: postsPerWeekOf(posts),
+    postsPerWeek: preview ? null : postsPerWeekOf(posts),
     verified: Boolean(input.verified),
     sample: Boolean(input.sample),
+    preview,
   };
 }
 
@@ -146,4 +152,19 @@ export function dedupe(creators: Creator[]): Creator[] {
   const seen = new Map<string, Creator>();
   for (const c of creators) if (!seen.has(c.id)) seen.set(c.id, c);
   return [...seen.values()];
+}
+
+/**
+ * Add new results to a list. A full profile replaces a quick-scan preview of the same creator,
+ * keeping the preview's country if the full profile didn't find one.
+ */
+export function mergeCreators(current: Creator[], incoming: Creator[]): Creator[] {
+  const out = new Map(current.map((c) => [c.id, c]));
+  for (const c of incoming) {
+    const had = out.get(c.id);
+    if (!had) { out.set(c.id, c); continue; }
+    if (c.preview && !had.preview) continue;
+    out.set(c.id, !c.country && had.country ? { ...c, country: had.country, countrySource: had.countrySource } : c);
+  }
+  return [...out.values()];
 }

@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { access, KEY_HEADER } from "@/lib/auth.ts";
 import { startRun } from "@/lib/apify.ts";
+import { cacheGet, cachePut, scanKey, withSavedProfiles } from "@/lib/cache.ts";
 import { sampleCreators } from "@/lib/sample.ts";
 import { searchYouTube } from "@/lib/youtube.ts";
-import { PLATFORMS, type Creator, type Job, type Platform, type ProviderError, type SearchResponse } from "@/lib/types.ts";
+import { PLATFORMS, type Creator, type Job, type Platform, type ProviderError, type SavedResult, type SearchResponse } from "@/lib/types.ts";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -22,6 +23,8 @@ export async function POST(req: Request) {
 
   const region = typeof body?.region === "string" && /^[A-Z]{2}$/.test(body.region) ? body.region : null;
   const limit = Math.min(Math.max(Number(body?.limit) || 20, 1), MAX_PER_PLATFORM);
+  // Results saved in the last week are reused for free unless the person asks for fresh ones.
+  const fresh = body?.fresh === true;
 
   const level = access(req.headers.get(KEY_HEADER));
   if (level === "denied") return NextResponse.json({ message: "That password isn't right." }, { status: 401 });
@@ -36,12 +39,23 @@ export async function POST(req: Request) {
   const jobs: Job[] = [];
   const errors: ProviderError[] = [];
 
+  const saved: SavedResult[] = [];
+
   await Promise.all(
     platforms.map(async (platform) => {
       try {
+        const key = scanKey(platform, query, region, limit);
+        const hit = fresh ? null : await cacheGet<Creator[]>(key, env);
+        if (hit) {
+          creators.push(...(await withSavedProfiles(hit.data, env)));
+          saved.push({ platform, savedAt: hit.savedAt });
+          return;
+        }
         if (platform === "youtube") {
           if (!env.YOUTUBE_API_KEY) throw new Error("Add YOUTUBE_API_KEY to the environment to search YouTube.");
-          creators.push(...(await searchYouTube(query, limit, region, env.YOUTUBE_API_KEY)));
+          const found = await searchYouTube(query, limit, region, env.YOUTUBE_API_KEY);
+          creators.push(...found);
+          if (found.length) await cachePut(key, found, env);
         } else {
           if (!env.APIFY_TOKEN) throw new Error("Add APIFY_TOKEN to the environment to search Instagram and TikTok.");
           const runId = await startRun(platform, "discover", { query, limit, region }, env);
@@ -53,6 +67,6 @@ export async function POST(req: Request) {
     }),
   );
 
-  const res: SearchResponse = { mode: "live", creators, jobs, errors };
+  const res: SearchResponse = { mode: "live", creators, jobs, errors, saved };
   return NextResponse.json(res);
 }

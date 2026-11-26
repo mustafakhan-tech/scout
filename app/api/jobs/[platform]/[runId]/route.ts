@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { access, KEY_HEADER } from "@/lib/auth.ts";
-import { discover, normalize, runItems, startRun } from "@/lib/apify.ts";
+import { discover, normalize, previewTikTok, runItems, startRun } from "@/lib/apify.ts";
+import { cachePut, saveProfiles, scanKey, withSavedProfiles } from "@/lib/cache.ts";
 import type { Job, JobResponse, JobStage } from "@/lib/types.ts";
 
 export const dynamic = "force-dynamic";
@@ -30,11 +31,19 @@ export async function GET(req: Request, { params }: { params: Promise<{ platform
     if (state.status === "running") return NextResponse.json({ status: "running", creators: [] } satisfies JobResponse);
     if (state.status === "failed") return NextResponse.json({ status: "failed", creators: [], message: state.message } satisfies JobResponse);
 
-    if (stage === "discover") {
-      const found = discover(platform, state.items, limit, region);
-      if (found.handles.length === 0 && platform === "tiktok") {
+    if (stage === "discover" && platform === "tiktok") {
+      // TikTok stops at the quick scan. Reading full profiles costs more, so it waits until
+      // the person picks who is worth it (see /api/analyze).
+      const previews = previewTikTok(state.items, limit, region);
+      if (previews.length === 0) {
         return NextResponse.json({ status: "done", creators: [], message: "No TikTok videos came back for this niche." } satisfies JobResponse);
       }
+      if (query) await cachePut(scanKey("tiktok", query, region, limit), previews, env);
+      return NextResponse.json({ status: "done", creators: await withSavedProfiles(previews, env) } satisfies JobResponse);
+    }
+
+    if (stage === "discover") {
+      const found = discover(platform, state.items, limit, region);
       // Instagram with no hashtag results falls back to account search inside the profiles stage.
       const nextId = await startRun(platform, "profiles", { query, limit, handles: found.handles, region }, env);
       const next: Job = { platform, runId: nextId, stage: "profiles", from: runId, limit, query, region };
@@ -46,7 +55,11 @@ export async function GET(req: Request, { params }: { params: Promise<{ platform
       const origin = await runItems(from, env).catch(() => null);
       if (origin?.status === "done") hints = discover("tiktok", origin.items, 50, region).countries;
     }
-    return NextResponse.json({ status: "done", creators: normalize(platform, state.items, hints) } satisfies JobResponse);
+    const creators = normalize(platform, state.items, hints);
+    await saveProfiles(creators, env);
+    // A whole Instagram search finishes here, so save it for repeat searches too.
+    if (platform === "instagram" && query && creators.length) await cachePut(scanKey("instagram", query, region, limit), creators, env);
+    return NextResponse.json({ status: "done", creators } satisfies JobResponse);
   } catch (e) {
     const res: JobResponse = { status: "failed", creators: [], message: e instanceof Error ? e.message : "Couldn't check the search." };
     return NextResponse.json(res, { status: 502 });

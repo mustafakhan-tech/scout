@@ -75,6 +75,8 @@ export interface Creator {
   verified: boolean;
   /** True for generated demo data */
   sample: boolean;
+  /** From a quick scan: followers and views of the niche posts found, not yet their latest posts */
+  preview: boolean;
 }
 
 export interface SearchRequest {
@@ -105,11 +107,19 @@ export interface ProviderError {
   message: string;
 }
 
+export interface SavedResult {
+  platform: Platform;
+  /** When the saved results were fetched, ms since epoch */
+  savedAt: number;
+}
+
 export interface SearchResponse {
   mode: "sample" | "live";
   creators: Creator[];
   jobs: Job[];
   errors: ProviderError[];
+  /** Platforms answered from results saved in the last week, at no cost */
+  saved?: SavedResult[];
 }
 
 export interface JobResponse {

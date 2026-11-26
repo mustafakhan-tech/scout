@@ -63,15 +63,23 @@ YouTube searches return in a few seconds. Instagram and TikTok start an Apify ru
 
 ## Costs
 
-Measured on real searches, 10 creators per platform:
+Scout is built to spend as little Apify credit as possible:
 
-| Platform | Cost per search | Time |
-|---|---|---|
-| YouTube | Free (about 130 of the 10,000 daily quota units) | 2–3 seconds |
-| Instagram | about $0.08 | about 1 minute |
-| TikTok | about $0.30 | about 1 minute |
+- **TikTok is two steps.** A search is a quick scan: it reads videos about the niche and shows who made them, with real follower counts, the views on those videos, country and gender. Nothing more is spent until you pick creators worth a closer look and press **Analyze**, which reads their latest 6 videos for a breakout score, brand deals and true average views.
+- **Results are saved for a week**, in a key-value store on the same Apify account. Repeating a search, or analyzing someone you already analyzed, costs nothing. "Get fresh results" skips the saved copy.
+- **The cost shows before you search**, under the Search button.
 
-TikTok costs about 3¢ per creator and Instagram under 1¢, so 50 TikTok creators is about $1.65. Scout shows the estimate under the Search button before you run it. Apify's free plan includes $5 of usage a month; start with 10–20 per platform. Each run's spend cap scales with the number of creators asked for, up to `APIFY_MAX_CHARGE_USD` ($2 by default), so a bad input can't run up a bill.
+Measured prices:
+
+| Step | Cost |
+|---|---|
+| YouTube search | Free (about 230 of the 10,000 daily quota units with a region) |
+| TikTok quick scan, 20 creators | about 15¢ (22¢ with a region, which also searches local hashtags) |
+| Analyze one TikTok creator | about 2¢ |
+| Instagram search, 20 creators | about 16¢ |
+| Any search repeated within 7 days | Free |
+
+A typical TikTok session, scanning 20 creators in a region and analyzing the 5 best, costs about 33¢. Analyzing all 20 straight away would cost about 66¢. Apify's free plan includes $5 of usage a month. Each run's spend cap is half again its expected cost (Apify's minimum is 50¢), up to `APIFY_MAX_CHARGE_USD` ($2 by default), so a bad input can't run up a bill.
 
 ## Setup
 
@@ -92,6 +100,8 @@ app/page.tsx                       search, filters, results table
 app/components/RangeHistogram.tsx  dual-thumb slider drawn over a histogram
 app/api/search/route.ts            runs YouTube searches, starts Apify runs, serves sample data
 app/api/jobs/[platform]/[runId]    checks an Apify run and normalizes its results
+app/api/analyze/route.ts           reads the latest videos of TikTok creators picked from a quick scan
+lib/cache.ts                       week-long result cache in an Apify key-value store
 lib/youtube.ts                     channel search + recent-upload stats
 lib/apify.ts                       actor inputs and TikTok/Instagram normalizers
 lib/metrics.ts                     averages, engagement rates, CPM

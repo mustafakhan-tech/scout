@@ -342,3 +342,45 @@ test("Apify out-of-credit errors read plainly", async () => {
   assert.match(m, /credit for this month is used up \(\$0\.46 left\)/);
   assert.equal(friendlyApifyError("Actor not found"), "Actor not found");
 });
+
+test("TikTok quick scan builds preview creators without paying for profiles", async () => {
+  const { previewTikTok, expectedCost, ANALYZE_COST } = await import("./apify.ts");
+  const meta = { name: "thandi", nickName: "Thandi M", fans: 12_000, signature: "Joburg 🇿🇦 she/her" };
+  const items = [
+    { authorMeta: meta, playCount: 9000, diggCount: 700, commentCount: 20, text: "fit check", createTimeISO: "2026-11-20T10:00:00Z" },
+    { authorMeta: meta, playCount: 4000, diggCount: 300, commentCount: 10, text: "#ad thrift haul", createTimeISO: "2026-11-24T10:00:00Z" },
+  ];
+  const [c] = previewTikTok(items, 10, "ZA", Date.parse("2026-11-26T00:00:00Z"));
+  assert.equal(c.preview, true);
+  assert.equal(c.followers, 12_000);
+  assert.equal(c.avgViews, 6500);
+  assert.equal(c.breakout, null);
+  assert.equal(c.daysSinceLastPost, null);
+  assert.equal(c.country, "ZA");
+  assert.equal(c.countrySource, "bio");
+  assert.equal(c.gender, "woman");
+  assert.equal(c.posts[0].views, 4000, "newest first");
+  // A regional scan of 20 reads 60 videos; analyzing one creator reads 6.
+  assert.ok(Math.abs(expectedCost("tiktok", "discover", 20, "ZA") - 60 * 0.0037) < 1e-9);
+  assert.ok(Math.abs(ANALYZE_COST - 6 * 0.0037) < 1e-9);
+});
+
+test("a full profile replaces its preview but keeps a country the preview found", async () => {
+  const { mergeCreators, buildCreator } = await import("./metrics.ts");
+  const base = { platform: "tiktok" as const, handle: "lerato", url: "u", followers: 5000, posts: [] };
+  const preview = buildCreator({ ...base, country: "ZA", countrySource: "posts", preview: true });
+  const full = buildCreator({ ...base, followers: 5100 });
+  const merged = mergeCreators([preview], [full]);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].preview, false);
+  assert.equal(merged[0].followers, 5100);
+  assert.equal(merged[0].country, "ZA");
+  // A later preview never overwrites a full profile.
+  assert.equal(mergeCreators(merged, [preview])[0].preview, false);
+});
+
+test("cache keys are safe Apify record keys", async () => {
+  const { scanKey, profileKey } = await import("./cache.ts");
+  assert.equal(scanKey("tiktok", "Café Recipes!", "ZA", 20), "scan_tiktok_za_20_cafe-recipes".replace("za", "ZA"));
+  assert.match(profileKey("instagram", "jade.club_6"), /^[A-Za-z0-9!\-_.'()]+$/);
+});
