@@ -61,7 +61,8 @@ export function emptyFilters(platforms: Platform[]): Filters {
     countries: [],
     includeUnknownCountry: true,
     gender: "any",
-    includeUnknownGender: true,
+    // "Women" means women: creators Scout can't place are one checkbox away.
+    includeUnknownGender: false,
     languages: [],
     platforms: [...platforms],
     shortlistOnly: false,

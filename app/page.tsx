@@ -464,6 +464,14 @@ export default function Home() {
           </select>
         </div>
         <div className="field">
+          <label htmlFor="gender">Gender</label>
+          <select id="gender" value={filters.gender} onChange={(e) => setFilters((f) => ({ ...f, gender: e.target.value as Filters["gender"] }))}>
+            <option value="any">Anyone</option>
+            <option value="woman">Women</option>
+            <option value="man">Men</option>
+          </select>
+        </div>
+        <div className="field">
           <label htmlFor="limit">Per platform</label>
           <select id="limit" value={limit} onChange={(e) => setLimit(Number(e.target.value))}>
             {[10, 20, 30, 50].map((n) => <option key={n} value={n}>{n}</option>)}
