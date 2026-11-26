@@ -303,6 +303,7 @@ export default function Home() {
           <p>Find creators before they break out. Search YouTube, Instagram and TikTok by niche, then rank creators by momentum, brand-deal history and engagement.</p>
         </div>
         <div className="access">
+          <a className="link-btn" href="/deal">Deal Check</a>
           {access === "live" ? (
             <>
               <span className="mode mode-live">Live search</span>

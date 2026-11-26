@@ -105,6 +105,11 @@ export default function CreatorPanel({ creator: c, niche, basis, starred, onTogg
           <button type="button" className={`btn${starred ? " btn-on" : ""}`} onClick={onToggleStar} aria-pressed={starred}>
             {starred ? "★ On shortlist" : "☆ Add to shortlist"}
           </button>
+          {c.avgViews !== null && (
+            <a className="btn" href={`/deal?${new URLSearchParams({ platform: c.platform, views: String(Math.round(c.avgViews)), name: c.name.split(/\s+/)[0] ?? "" })}`}>
+              Check a deal
+            </a>
+          )}
           {c.sample ? (
             <span className="muted">Sample creator: no real profile to open</span>
           ) : (

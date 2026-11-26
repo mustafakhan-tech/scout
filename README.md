@@ -21,6 +21,19 @@ Tools like Modash and HypeAuditor are built around huge creator databases, and t
 - **First message.** The detail panel writes a short outreach DM from what Scout measured (their best organic post and its views), so it never invents a compliment.
 - **Pay per search.** A search costs cents on your own Apify account instead of a monthly subscription.
 
+## Deal Check
+
+A second tool at [`/deal`](https://scout-hazel-theta.vercel.app/deal): put in a creator's average views and their ask, and it shows
+
+- the range of sales or signups you can expect, with the **break-even point drawn through it**
+- return, CPM, cost per click and cost per sale
+- a **fair fee range** from published CPM benchmarks (or your own target), and a counter-offer message when the ask is too high
+- a B2B mode, where a signup's value comes from your close rate and customer value
+
+![Deal Check: a $1,200 ask for a 50K-view TikTok creator, with the break-even line beyond the expected sales range and a $500 counter-offer](docs/deal-check.png)
+
+Every creator in Scout has a **Check a deal** button that opens it prefilled. The math lives in `lib/deal.ts` and is covered by tests.
+
 ## What it does
 
 - **Searches by niche** on one, two or all three platforms, with an optional region.
@@ -82,6 +95,9 @@ lib/apify.ts                       actor inputs and TikTok/Instagram normalizers
 lib/metrics.ts                     averages, engagement rates, CPM
 lib/filters.ts                     filtering, log-scale sliders, sorting, CSV export
 lib/sample.ts                      deterministic invented creators for sample mode
+lib/deal.ts                        Deal Check math: funnel, break-even, fair fee, counter-offer
+app/deal/page.tsx                  Deal Check page
+app/components/RangeBar.tsx        low–high band with a break-even or price marker
 ```
 
 Tests cover the metrics, normalizers, filters, CSV escaping and access rules: `npm test`.
