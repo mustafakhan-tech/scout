@@ -55,6 +55,10 @@ test("manager mentions are detected", () => {
   assert.ok(bioMentionsManager("Managed by Big Agency"));
   assert.ok(!bioMentionsManager("Personal finance tips. DM for collabs"));
   assert.ok(!bioMentionsManager("I manage my money better now"));
+  assert.ok(!bioMentionsManager("Business loan and Money management. Business credit and management."));
+  assert.ok(!bioMentionsManager("Wealth management tips for founders"));
+  assert.ok(bioMentionsManager("Management: hello@bright.co"));
+  assert.ok(bioMentionsManager("Partnerships via my manager, link below."));
 });
 
 test("shop-like bios are detected, creators are not", () => {
@@ -67,6 +71,21 @@ test("shop-like bios are detected, creators are not", () => {
 test("momentum uses one measure: likes when most posts have no views", () => {
   const ig = [post(0, 1, { views: null, likes: 300 }), post(0, 2, { views: null, likes: 300 }), post(9000, 3, { likes: 300 }), post(0, 4, { views: null, likes: 100 }), post(0, 5, { views: null, likes: 100 })];
   assert.equal(momentumOf(ig), 3);
+});
+
+test("posts still collecting views are left out of momentum", async () => {
+  const { maturePosts } = await import("./signals.ts");
+  const fresh = [post(500, 0), post(800, 1), post(9000, 4), post(9000, 6), post(9000, 8), post(9000, 10), post(9000, 12)];
+  assert.equal(maturePosts(fresh, "tiktok", NOW).length, 5);
+  const c = buildCreator({ platform: "tiktok", handle: "f", url: "", followers: 20_000, now: NOW, posts: fresh.map((p) => ({ views: p.views, likes: p.likes, comments: 1, date: p.date })) });
+  assert.equal(c.momentum, 1);
+});
+
+test("low views for size flags likely inflated followers", () => {
+  const c = buildCreator({ platform: "tiktok", handle: "x", url: "", followers: 983_000, posts: [{ views: 170, likes: 2, comments: 0 }] });
+  assert.equal(c.lowReach, true);
+  const ok = buildCreator({ platform: "tiktok", handle: "y", url: "", followers: 983_000, posts: [{ views: 90_000, likes: 2, comments: 0 }] });
+  assert.equal(ok.lowReach, false);
 });
 
 test("one viral post doesn't make an account rising", () => {
@@ -135,6 +154,13 @@ test("discovery ranks authors by niche videos posted, then plays", () => {
   assert.deepEqual(discoverInstagram([{ ownerUsername: "x", likesCount: 5 }, { ownerUsername: "y", likesCount: 50 }], 5).handles, ["y", "x"]);
 });
 
+test("hashtags from a niche", async () => {
+  const { hashtagsFor } = await import("./apify.ts");
+  assert.deepEqual(hashtagsFor("Home Espresso!"), ["homeespresso"]);
+  assert.deepEqual(hashtagsFor("café recipes"), ["caférecipes"]);
+  assert.deepEqual(hashtagsFor("  "), []);
+});
+
 test("youtube channels are ranked by how many niche videos they made", () => {
   assert.deepEqual(rankChannels(["a", "b", "b", "c", "a", "b"], 2), ["b", "a"]);
 });
@@ -142,7 +168,11 @@ test("youtube channels are ranked by how many niche videos they made", () => {
 test("actor inputs: discovery searches posts, profiles scrape handles, Instagram falls back to account search", () => {
   assert.equal(buildInput("tiktok", "discover", { query: "x", limit: 10 }).searchSection, "/video");
   assert.deepEqual(buildInput("tiktok", "profiles", { limit: 10, handles: ["a"] }).profiles, ["a"]);
-  assert.equal(buildInput("instagram", "discover", { query: "x", limit: 10 }).searchType, "hashtag");
+  assert.deepEqual(buildInput("instagram", "discover", { query: "small business finance", limit: 10 }).directUrls, [
+    "https://www.instagram.com/explore/tags/smallbusinessfinance/",
+    "https://www.instagram.com/explore/tags/businessfinance/",
+    "https://www.instagram.com/explore/tags/smallbusiness/",
+  ]);
   assert.deepEqual(buildInput("instagram", "profiles", { limit: 10, handles: ["a"] }).directUrls, ["https://www.instagram.com/a/"]);
   assert.equal(buildInput("instagram", "profiles", { query: "x", limit: 10, handles: [] }).searchType, "user");
 });
@@ -231,6 +261,15 @@ test("sample data is deterministic, marked as sample, and exercises every signal
   const rising = one.filter((c) => (c.breakout ?? 0) >= 70).length;
   assert.ok(rising > 0 && rising < one.length * 0.3, `rising ${rising} of ${one.length}`);
   assert.ok(one.some((c) => (c.daysSinceLastPost ?? 0) > 45));
+});
+
+test("country names cover every ISO code", async () => {
+  const { countryName } = await import("./countries.ts");
+  assert.equal(countryName("NO"), "Norway");
+  const { languageName } = await import("./countries.ts");
+  assert.equal(languageName("pt"), "Portuguese");
+  assert.equal(countryName("CA"), "Canada");
+  assert.equal(countryName(null), "Unknown");
 });
 
 test("access levels", () => {

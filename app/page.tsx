@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import RangeHistogram from "./components/RangeHistogram.tsx";
 import CreatorPanel from "./components/CreatorPanel.tsx";
-import { COUNTRIES, countryName, flag } from "@/lib/countries.ts";
+import { COUNTRIES, countryName, flag, languageName } from "@/lib/countries.ts";
 import { cpm, dedupe } from "@/lib/metrics.ts";
 import { RISING } from "@/lib/signals.ts";
 import {
@@ -46,8 +46,9 @@ const SIGNAL_LABEL: Record<keyof Signals, { label: string; hint: string }> = {
   hideInactive: { label: "Posted recently", hint: `Posted in the last ${INACTIVE_DAYS} days` },
   hideBusiness: { label: "Hide shops and companies", hint: "Bio or account type reads like a store or business" },
   hideTiny: { label: "Hide accounts under 1K followers", hint: "Filters out brand-new and dormant accounts" },
+  hideLowReach: { label: "Hide low views for size", hint: "Views under 2% of followers, which often means bought or long-gone followers" },
 };
-const SIGNAL_ORDER: (keyof Signals)[] = ["rising", "noDeals", "noManager", "hideInactive", "hideBusiness", "hideTiny"];
+const SIGNAL_ORDER: (keyof Signals)[] = ["rising", "noDeals", "noManager", "hideInactive", "hideBusiness", "hideTiny", "hideLowReach"];
 
 function stageText(j: JobState): string {
   if (j.status === "failed") return j.message || "search failed.";
@@ -235,6 +236,15 @@ export default function Home() {
     return { list: [...m.entries()].sort((a, b) => b[1] - a[1]), unknown };
   }, [creators, filters.platforms, filters.signals]);
 
+  const languageCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const c of creators) {
+      if (!filters.platforms.includes(c.platform) || !passesSignals(c, filters.signals) || !c.language) continue;
+      m.set(c.language, (m.get(c.language) ?? 0) + 1);
+    }
+    return [...m.entries()].sort((a, b) => b[1] - a[1]);
+  }, [creators, filters.platforms, filters.signals]);
+
   const resultPlatforms = PLATFORMS.filter((p) => creators.some((c) => c.platform === p));
   const open = openId ? creators.find((c) => c.id === openId) ?? null : null;
 
@@ -246,6 +256,9 @@ export default function Home() {
   }
   function toggleCountry(code: string) {
     setFilters((f) => ({ ...f, countries: f.countries.includes(code) ? f.countries.filter((c) => c !== code) : [...f.countries, code] }));
+  }
+  function toggleLanguage(code: string) {
+    setFilters((f) => ({ ...f, languages: f.languages.includes(code) ? f.languages.filter((c) => c !== code) : [...f.languages, code] }));
   }
   function toggleShortlist(id: string) {
     setShortlist((cur) => {
@@ -270,7 +283,7 @@ export default function Home() {
   const fmt: Record<Metric, (n: number) => string> = { followers: compact, avgViews: compact, er: pct };
   const anyFilter =
     METRICS.some((m) => filters.ranges[m].lo > 0 || filters.ranges[m].hi < 1) ||
-    filters.countries.length > 0 || !filters.includeUnknownCountry || filters.shortlistOnly ||
+    filters.countries.length > 0 || filters.languages.length > 0 || !filters.includeUnknownCountry || filters.shortlistOnly ||
     filters.platforms.length < resultPlatforms.length || SIGNAL_ORDER.some((s) => s !== "hideBusiness" && s !== "hideTiny" && filters.signals[s]);
 
   const sortHeader = (k: SortKey, label: string, numeric = true) => (
@@ -449,8 +462,22 @@ export default function Home() {
                   <input type="checkbox" checked={filters.includeUnknownCountry} onChange={(e) => setFilters((f) => ({ ...f, includeUnknownCountry: e.target.checked }))} />
                   <span>Include creators with no country listed ({countryCounts.unknown})</span>
                 </label>
-                <p className="rh-hint">YouTube countries come from the channel profile and TikTok countries from where videos were posted. Instagram only shows a country for business accounts.</p>
+                <p className="rh-hint">YouTube countries come from the channel profile. Instagram only shows one for business accounts, and TikTok rarely shares it, so use the language filter there.</p>
               </fieldset>
+
+              {languageCounts.length > 1 && (
+                <fieldset className="rail-group">
+                  <legend>Posts in</legend>
+                  <div className="chips">
+                    {languageCounts.map(([code, n]) => (
+                      <button key={code} type="button" className={`chip${filters.languages.includes(code) ? " on" : ""}`} aria-pressed={filters.languages.includes(code)} onClick={() => toggleLanguage(code)}>
+                        {languageName(code)} <span className="chip-n">{n}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <p className="rh-hint">The language of their recent captions. Useful on TikTok, which doesn&rsquo;t share a country.</p>
+                </fieldset>
+              )}
 
               {anyFilter && (
                 <button type="button" className="link-btn" onClick={() => setFilters(emptyFilters(resultPlatforms))}>Clear all filters</button>
@@ -532,9 +559,13 @@ export default function Home() {
                             {c.managed && <span className="tag">Manager listed</span>}
                             {c.business && <span className="tag">Shop or company</span>}
                             {c.daysSinceLastPost !== null && c.daysSinceLastPost > INACTIVE_DAYS && <span className="tag">Inactive</span>}
+                            {c.lowReach && <span className="tag tag-warn">Low views for size</span>}
                           </div>
                         </td>
-                        <td className="country">{c.country ? <><span aria-hidden="true">{flag(c.country)}</span> {countryName(c.country)}</> : <span className="muted">Not listed</span>}</td>
+                        <td className="country">
+                          {c.country ? <><span aria-hidden="true">{flag(c.country)}</span> {countryName(c.country)}</> : <span className="muted">Not listed</span>}
+                          {c.language && c.language !== "en" && <span className="lang">Posts in {languageName(c.language)}</span>}
+                        </td>
                         <td className="num">{compact(c.followers)}</td>
                         <td className="num">{compact(c.avgViews)}</td>
                         <td className="num">{pct(er)}</td>

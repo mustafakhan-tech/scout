@@ -1,5 +1,5 @@
 import { cpm } from "./metrics.ts";
-import { countryName } from "./countries.ts";
+import { countryName, languageName } from "./countries.ts";
 import { RISING } from "./signals.ts";
 import { PLATFORM_LABEL, type Creator, type Platform } from "./types.ts";
 
@@ -27,6 +27,8 @@ export interface Signals {
   hideTiny: boolean;
   /** Hide accounts with no post in 60 days */
   hideInactive: boolean;
+  /** Hide accounts whose views are tiny next to their followers */
+  hideLowReach: boolean;
 }
 
 export interface Filters {
@@ -34,6 +36,8 @@ export interface Filters {
   signals: Signals;
   countries: string[];
   includeUnknownCountry: boolean;
+  /** ISO 639-1 codes; empty means any */
+  languages: string[];
   platforms: Platform[];
   shortlistOnly: boolean;
 }
@@ -44,7 +48,7 @@ export const FULL: Range = { lo: 0, hi: 1 };
 export const TINY = 1_000;
 export const INACTIVE_DAYS = 60;
 
-export const DEFAULT_SIGNALS: Signals = { rising: false, noDeals: false, noManager: false, hideBusiness: true, hideTiny: true, hideInactive: false };
+export const DEFAULT_SIGNALS: Signals = { rising: false, noDeals: false, noManager: false, hideBusiness: true, hideTiny: true, hideInactive: false, hideLowReach: false };
 
 export function emptyFilters(platforms: Platform[]): Filters {
   return {
@@ -52,6 +56,7 @@ export function emptyFilters(platforms: Platform[]): Filters {
     signals: { ...DEFAULT_SIGNALS },
     countries: [],
     includeUnknownCountry: true,
+    languages: [],
     platforms: [...platforms],
     shortlistOnly: false,
   };
@@ -104,6 +109,7 @@ export function passesSignals(c: Creator, s: Signals): boolean {
   if (s.hideBusiness && c.business) return false;
   if (s.hideTiny && c.followers !== null && c.followers < TINY) return false;
   if (s.hideInactive && (c.daysSinceLastPost === null || c.daysSinceLastPost > INACTIVE_DAYS)) return false;
+  if (s.hideLowReach && c.lowReach) return false;
   return true;
 }
 
@@ -113,6 +119,7 @@ export function baseFilter(creators: Creator[], f: Filters, shortlist: Set<strin
     if (!f.platforms.includes(c.platform)) return false;
     if (f.shortlistOnly && !shortlist.has(c.id)) return false;
     if (!passesSignals(c, f.signals)) return false;
+    if (f.languages.length > 0 && (c.language === null || !f.languages.includes(c.language))) return false;
     if (c.country === null) return f.includeUnknownCountry;
     return f.countries.length === 0 || f.countries.includes(c.country);
   });
@@ -158,7 +165,7 @@ export function toCsv(list: Creator[], fee: number): string {
   const head = [
     "Platform", "Handle", "Name", "Profile URL", "Country", "Followers", "Avg views", "Avg likes", "Avg comments",
     "ER (by followers)", "ER (by views)", "Breakout score", "Momentum", "Brand deals in recent posts", "Posts sampled",
-    "Manager listed", "Days since last post", "Posts per week", "CPM at fee", "Bio",
+    "Manager listed", "Language", "Low views for size", "Days since last post", "Posts per week", "CPM at fee", "Bio",
   ];
   const rows = list.map((c) => {
     const r = (n: number | null, d = 0) => (n === null ? "" : n.toFixed(d));
@@ -167,7 +174,7 @@ export function toCsv(list: Creator[], fee: number): string {
       PLATFORM_LABEL[c.platform], c.handle, c.name, c.url, c.country ? countryName(c.country) : "",
       r(c.followers), r(c.avgViews), r(c.avgLikes), r(c.avgComments), p(c.erFollowers), p(c.erViews),
       r(c.breakout), c.momentum === null ? "" : c.momentum.toFixed(2) + "x", c.brandDeals, c.postsSampled,
-      c.managed ? "Yes" : "No", r(c.daysSinceLastPost), r(c.postsPerWeek, 1), fee ? r(cpm(fee, c.avgViews), 2) : "",
+      c.managed ? "Yes" : "No", c.language ? languageName(c.language) : "", c.lowReach ? "Yes" : "No", r(c.daysSinceLastPost), r(c.postsPerWeek, 1), fee ? r(cpm(fee, c.avgViews), 2) : "",
       c.bio.replace(/\s+/g, " "),
     ].map(csvCell).join(",");
   });

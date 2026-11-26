@@ -20,6 +20,18 @@ export interface StageOptions {
   handles?: string[];
 }
 
+/**
+ * Hashtags to search for a niche: the whole phrase joined, then its trailing and leading pairs.
+ * "small business finance" -> smallbusinessfinance, businessfinance, smallbusiness
+ */
+export function hashtagsFor(query: string): string[] {
+  const words = query.toLowerCase().replace(/[^\p{L}\p{N} ]/gu, " ").split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [];
+  const tags = [words.join("")];
+  if (words.length > 2) tags.push(words.slice(-2).join(""), words.slice(0, 2).join(""));
+  return [...new Set(tags)].filter((t) => t.length >= 3 && t.length <= 60).slice(0, 3);
+}
+
 /*
  * Two stages per platform:
  *   discover  – search posts about the niche, to find who is actively making that content
@@ -30,12 +42,16 @@ export function buildInput(platform: Platform, stage: JobStage, o: StageOptions,
   const noDownloads = { shouldDownloadVideos: false, shouldDownloadCovers: false, shouldDownloadAvatars: false, shouldDownloadSlideshowImages: false };
   if (platform === "tiktok") {
     if (stage === "discover") {
-      return { searchQueries: [o.query], searchSection: "/video", resultsPerPage: Math.min(o.limit * 4, 100), ...noDownloads };
+      return { searchQueries: [o.query], searchSection: "/video", resultsPerPage: Math.min(o.limit * 3, 90), ...noDownloads };
     }
     return { profiles: o.handles, profileScrapeSections: ["videos"], resultsPerPage: RECENT_POSTS, profileSorting: "latest", excludePinnedPosts: true, ...noDownloads };
   }
   if (stage === "discover") {
-    return { search: o.query, searchType: "hashtag", searchLimit: 3, resultsType: "posts", resultsLimit: Math.min(Math.max(o.limit * 2, 20), 60) };
+    return {
+      directUrls: hashtagsFor(o.query ?? "").map((t) => `https://www.instagram.com/explore/tags/${t}/`),
+      resultsType: "posts",
+      resultsLimit: Math.min(Math.max(o.limit * 2, 15), 40),
+    };
   }
   if (o.handles && o.handles.length > 0) {
     return { directUrls: o.handles.map((h) => `https://www.instagram.com/${h}/`), resultsType: "details", resultsLimit: RECENT_POSTS };

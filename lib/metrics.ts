@@ -1,6 +1,7 @@
 import type { Creator, Platform, CountrySource, Post } from "./types.ts";
 import {
-  bioMentionsManager, breakoutScore, captionLooksSponsored, daysSince, looksLikeBusiness, momentumOf, newestFirst, postsPerWeekOf,
+  bioMentionsManager, breakoutScore, captionLooksSponsored, daysSince, looksLikeBusiness, lowReachForSize, maturePosts, momentumOf, newestFirst,
+  postsPerWeekOf,
 } from "./signals.ts";
 
 /** Mean of the usable numbers. Negative values mean "hidden" on Instagram and are skipped. */
@@ -88,7 +89,7 @@ export function buildCreator(input: CreatorInput): Creator {
   const country = input.country ? input.country.toUpperCase() : null;
   const bio = (input.bio ?? "").trim();
 
-  const momentum = momentumOf(posts);
+  const momentum = momentumOf(maturePosts(posts, input.platform, input.now));
   const reach = avgViews !== null && followers ? avgViews / followers : null;
   const daysSinceLastPost = daysSince(posts[0]?.date ?? null, input.now);
 
@@ -117,6 +118,7 @@ export function buildCreator(input: CreatorInput): Creator {
     brandDeals: posts.filter((p) => p.sponsored).length,
     managed: bioMentionsManager(`${bio} ${input.contactText ?? ""}`),
     business: looksLikeBusiness(bio, { seller: input.seller }),
+    lowReach: lowReachForSize(reach, followers),
     daysSinceLastPost,
     postsPerWeek: postsPerWeekOf(posts),
     verified: Boolean(input.verified),

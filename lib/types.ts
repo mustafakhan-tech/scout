@@ -62,6 +62,8 @@ export interface Creator {
   managed: boolean;
   /** Bio or account type reads like a shop or company, not a creator */
   business: boolean;
+  /** Average views are tiny next to follower count */
+  lowReach: boolean;
   daysSinceLastPost: number | null;
   postsPerWeek: number | null;
 

@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { countryName, flag } from "@/lib/countries.ts";
+import { countryName, flag, languageName } from "@/lib/countries.ts";
 import { ago, compact, pct, times, type ErBasis } from "@/lib/filters.ts";
 import { outreachMessage, type Sender } from "@/lib/outreach.ts";
-import { performanceMetric, REACH_PAR, RISING } from "@/lib/signals.ts";
+import { MATURE_DAYS, performanceMetric, REACH_PAR, RISING } from "@/lib/signals.ts";
 import { PLATFORM_LABEL, type Creator } from "@/lib/types.ts";
 
 const SENDER_STORE = "scout-sender";
@@ -23,6 +23,8 @@ export function explainBreakout(c: Creator): string[] {
   }
   if (c.daysSinceLastPost !== null && c.daysSinceLastPost > 45) out.push(`They last posted ${ago(c.daysSinceLastPost)}, which pulls the score down.`);
   if (c.followers !== null && c.followers > 1_000_000) out.push("They already have over a million followers, so they count as established, not up-and-coming.");
+  if (c.lowReach) out.push("Their views are under 2% of their follower count. That often means bought followers, or an audience that has moved on.");
+  if (c.momentum !== null) out.push(`Posts from the last ${MATURE_DAYS[c.platform]} days are left out of this comparison, because they're still collecting views.`);
   return out;
 }
 
@@ -126,6 +128,7 @@ export default function CreatorPanel({ creator: c, niche, basis, starred, onTogg
           <div><dt>Manager</dt><dd>{c.managed ? "Listed in bio" : "None listed"}</dd></div>
           <div><dt>Last post</dt><dd>{ago(c.daysSinceLastPost)}</dd></div>
           <div><dt>Posting</dt><dd>{c.postsPerWeek === null ? "–" : `${c.postsPerWeek.toFixed(1)} a week`}</dd></div>
+          {c.language && <div><dt>Posts in</dt><dd>{languageName(c.language)}</dd></div>}
         </dl>
 
         {chartPosts.length > 0 && (

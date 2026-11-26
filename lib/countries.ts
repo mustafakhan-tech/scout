@@ -29,13 +29,41 @@ export const COUNTRIES: Record<string, string> = {
   KR: "South Korea",
 };
 
+let regionNames: Intl.DisplayNames | null = null;
+try {
+  regionNames = new Intl.DisplayNames(["en"], { type: "region" });
+} catch {
+  regionNames = null;
+}
+
 export function countryName(code: string | null): string {
   if (!code) return "Unknown";
-  return COUNTRIES[code] ?? code;
+  if (COUNTRIES[code]) return COUNTRIES[code];
+  try {
+    return regionNames?.of(code) ?? code;
+  } catch {
+    return code;
+  }
 }
 
 /** Regional-indicator flag emoji for an ISO-2 code. */
 export function flag(code: string | null): string {
   if (!code || !/^[A-Z]{2}$/.test(code)) return "";
   return String.fromCodePoint(...[...code].map((c) => 0x1f1e6 + c.charCodeAt(0) - 65));
+}
+
+let languageNames: Intl.DisplayNames | null = null;
+try {
+  languageNames = new Intl.DisplayNames(["en"], { type: "language" });
+} catch {
+  languageNames = null;
+}
+
+export function languageName(code: string | null): string {
+  if (!code) return "Unknown";
+  try {
+    return languageNames?.of(code) ?? code;
+  } catch {
+    return code;
+  }
 }

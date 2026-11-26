@@ -299,3 +299,7 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; color:
 @media (prefers-reduced-motion: reduce) {
   .panel { animation: none; }
 }
+
+.tag-warn { border-color: #c9a227; color: #7a5d00; background: #fbf3d6; }
+.lang { display: block; font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+.explain li:last-child { color: var(--muted); font-size: 13px; }

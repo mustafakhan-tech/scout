@@ -12,8 +12,12 @@ export function captionLooksSponsored(caption: string): boolean {
   return SPONSOR_RE.test(caption);
 }
 
+/*
+ * Only contact-style mentions count. Plain "management" is everywhere in business and
+ * finance bios ("money management"), so it needs a colon, an @, or an agency context.
+ */
 const MANAGER_RE =
-  /(\bmgmt\b|\bmanagement\b|managed by|\bmanager\b|talent agency|represented by|\bmy agent\b|\bbookings?@|\bpartnerships@|@[\w.]*(mgmt|management|talent)\b|[\w.+-]+@[\w-]*(mgmt|management|talent|agency)[\w-]*\.)/i;
+  /(\bmgmt\b|managed by|represented by|\bmy (manager|agent|management|agency)\b|\b(manager|management|agent|agency)\s*[:@]|\b(talent|influencer|creator) (agency|management)\b|[\w.+-]+@[\w-]*(mgmt|management|talent|agency)[\w-]*\.|@[\w.]*(mgmt|management|talent)\b|\bbookings?@|\bpartnerships@)/i;
 
 export function bioMentionsManager(text: string): boolean {
   return MANAGER_RE.test(text);
@@ -50,7 +54,21 @@ export function newestFirst(posts: Post[]): Post[] {
 }
 
 /**
- * Median of the newest 3 posts divided by the median of the older ones.
+ * Posts younger than this are still collecting views, so comparing them with older posts would
+ * make every active creator look like they're slowing down.
+ */
+export const MATURE_DAYS: Record<Platform, number> = { tiktok: 3, instagram: 2, youtube: 7 };
+
+export function maturePosts(posts: Post[], platform: Platform, now = Date.now()): Post[] {
+  const min = MATURE_DAYS[platform];
+  return posts.filter((p) => {
+    const d = daysSince(p.date, now);
+    return d === null || d >= min;
+  });
+}
+
+/**
+ * Median of the newest 3 settled posts divided by the median of the older ones.
  * Medians keep one viral post from making an account look like it's taking off.
  */
 export function momentumOf(posts: Post[]): number | null {
@@ -106,3 +124,8 @@ export function breakoutScore(input: {
 }
 
 export const RISING = 70;
+
+/** Views under 2% of followers on an account over 10K usually means bought or long-gone followers. */
+export function lowReachForSize(reach: number | null, followers: number | null): boolean {
+  return reach !== null && followers !== null && followers >= 10_000 && reach < 0.02;
+}
