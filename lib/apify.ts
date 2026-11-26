@@ -52,10 +52,13 @@ export const REGION_TAGS: Record<string, string[]> = {
 /** Rough Apify cost per creator returned, from measured runs (discovery + profile scrape). */
 export const COST_PER_CREATOR: Record<"tiktok" | "instagram", number> = { tiktok: 0.033, instagram: 0.008 };
 
+export const APIFY_MIN_CAP = 0.5;
+
 /** Spend cap for one run: enough for the creators asked for, never above the account's ceiling. */
 export function runCap(platform: "tiktok" | "instagram", stage: JobStage, limit: number, ceiling: number): number {
   const share = stage === "discover" ? 0.35 : 0.65;
-  return Math.min(ceiling, Math.max(0.1, Math.round((0.05 + limit * COST_PER_CREATOR[platform] * share * 1.5) * 100) / 100));
+  // Apify refuses runs capped below $0.50.
+  return Math.max(APIFY_MIN_CAP, Math.min(ceiling, Math.round((0.05 + limit * COST_PER_CREATOR[platform] * share * 1.5) * 100) / 100));
 }
 
 /*

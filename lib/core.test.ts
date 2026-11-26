@@ -292,7 +292,8 @@ test("spend cap grows with the search but never passes the ceiling", async () =>
   assert.ok(runCap("tiktok", "profiles", 10, 2) < runCap("tiktok", "profiles", 50, 2));
   assert.ok(runCap("tiktok", "profiles", 50, 2) <= 2);
   assert.equal(runCap("tiktok", "profiles", 500, 2), 2);
-  assert.ok(runCap("instagram", "discover", 1, 2) >= 0.1);
+  assert.equal(runCap("instagram", "discover", 1, 2), 0.5);
+  assert.equal(runCap("tiktok", "profiles", 10, 0.2), 0.5);
 });
 
 test("TikTok creators get a country from their bio when the platform gives none", () => {

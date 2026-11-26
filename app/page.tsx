@@ -388,7 +388,8 @@ export default function Home() {
           <p className={`cost-note${estCost > 1 ? " cost-high" : ""}`}>
             Estimated Apify cost for this search: about ${estCost.toFixed(2)}
             {estCost > 1 ? `, roughly ${Math.round((estCost / 5) * 100)}% of the free $5 a month. Try 10–20 per platform first.` : "."}
-            {region && platforms.some((p) => p !== "youtube") ? ` TikTok runs from ${countryName(region)}; Instagram adds local hashtags.` : ""}
+            {region && platforms.includes("tiktok") ? ` TikTok searches from ${countryName(region)}.` : ""}
+            {region && platforms.includes("instagram") ? " Instagram adds local hashtags." : ""}
           </p>
         )}
         {formError && <p className="err form-err" role="alert">{formError}</p>}
