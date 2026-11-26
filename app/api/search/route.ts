@@ -44,7 +44,8 @@ export async function POST(req: Request) {
           creators.push(...(await searchYouTube(query, limit, region, env.YOUTUBE_API_KEY)));
         } else {
           if (!env.APIFY_TOKEN) throw new Error("Add APIFY_TOKEN to the environment to search Instagram and TikTok.");
-          jobs.push({ platform, runId: await startRun(platform, query, limit, env) });
+          const runId = await startRun(platform, "discover", { query, limit }, env);
+          jobs.push({ platform, runId, stage: "discover", limit, query });
         }
       } catch (e) {
         errors.push({ platform, message: e instanceof Error ? e.message : "Search failed." });

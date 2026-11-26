@@ -11,6 +11,18 @@ export const PLATFORM_LABEL: Record<Platform, string> = {
 /** Where a creator's country came from. */
 export type CountrySource = "profile" | "posts" | "sample";
 
+export interface Post {
+  /** ISO date, when the platform gives one */
+  date: string | null;
+  views: number | null;
+  likes: number | null;
+  comments: number | null;
+  /** Marked as an ad by the platform, or the caption reads like a paid post */
+  sponsored: boolean;
+  caption: string;
+  url: string | null;
+}
+
 export interface Creator {
   /** platform:handle, unique across a result set */
   id: string;
@@ -23,8 +35,11 @@ export interface Creator {
   /** ISO 3166-1 alpha-2, or null when the platform doesn't expose it */
   country: string | null;
   countrySource: CountrySource | null;
+  /** ISO 639-1 language of recent posts, when known */
+  language: string | null;
   followers: number | null;
-  /** How many recent posts the averages are based on */
+  /** Recent posts, newest first */
+  posts: Post[];
   postsSampled: number;
   avgViews: number | null;
   avgLikes: number | null;
@@ -33,6 +48,23 @@ export interface Creator {
   erFollowers: number | null;
   /** (avg likes + avg comments) / avg views */
   erViews: number | null;
+
+  /* ---- scouting signals ---- */
+  /** Newest posts' performance divided by older posts' */
+  momentum: number | null;
+  /** Average views divided by followers */
+  reach: number | null;
+  /** 0–100: how strongly the account looks like it's on the rise */
+  breakout: number | null;
+  /** Sponsored posts among the recent posts */
+  brandDeals: number;
+  /** Bio mentions a manager, agency or management email */
+  managed: boolean;
+  /** Bio or account type reads like a shop or company, not a creator */
+  business: boolean;
+  daysSinceLastPost: number | null;
+  postsPerWeek: number | null;
+
   verified: boolean;
   /** True for generated demo data */
   sample: boolean;
@@ -47,9 +79,16 @@ export interface SearchRequest {
   limit: number;
 }
 
+export type JobStage = "discover" | "profiles";
+
 export interface Job {
   platform: Platform;
   runId: string;
+  stage: JobStage;
+  /** Discovery run this profile run came from, used for country hints */
+  from?: string;
+  limit: number;
+  query: string;
 }
 
 export interface ProviderError {
@@ -67,5 +106,7 @@ export interface SearchResponse {
 export interface JobResponse {
   status: "running" | "done" | "failed";
   creators: Creator[];
+  /** Set when one stage finished and the next has started */
+  next?: Job;
   message?: string;
 }

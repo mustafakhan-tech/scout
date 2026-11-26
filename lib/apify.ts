@@ -1,10 +1,11 @@
-import { buildCreator, dedupe, mode, toNum, type PostStats } from "./metrics.ts";
-import type { Creator, Platform } from "./types.ts";
+import { buildCreator, dedupe, mode, toNum, type PostInput } from "./metrics.ts";
+import type { Creator, JobStage, Platform } from "./types.ts";
 
 const API = "https://api.apify.com/v2";
 const RECENT_POSTS = 8;
 
 type Env = Record<string, string | undefined>;
+type Rec = Record<string, any>;
 
 function actorFor(platform: Platform, env: Env): string {
   if (platform === "tiktok") return env.APIFY_TIKTOK_ACTOR || "clockworks~tiktok-scraper";
@@ -12,28 +13,35 @@ function actorFor(platform: Platform, env: Env): string {
   throw new Error(`No Apify actor for ${platform}`);
 }
 
-/** Actor input for a keyword search of creator profiles. */
-export function buildInput(platform: Platform, query: string, limit: number, env: Env = {}): Record<string, unknown> {
+export interface StageOptions {
+  query?: string;
+  limit: number;
+  /** Handles to profile, for the profiles stage */
+  handles?: string[];
+}
+
+/*
+ * Two stages per platform:
+ *   discover  – search posts about the niche, to find who is actively making that content
+ *   profiles  – scrape those creators' latest posts, to measure how they perform now
+ * Searching profiles directly mostly matches usernames, which surfaces shops and dead accounts.
+ */
+export function buildInput(platform: Platform, stage: JobStage, o: StageOptions, env: Env = {}): Record<string, unknown> {
+  const noDownloads = { shouldDownloadVideos: false, shouldDownloadCovers: false, shouldDownloadAvatars: false, shouldDownloadSlideshowImages: false };
   if (platform === "tiktok") {
-    return {
-      searchQueries: [query],
-      searchSection: "/user",
-      maxProfilesPerQuery: limit,
-      resultsPerPage: RECENT_POSTS,
-      profileSorting: "latest",
-      excludePinnedPosts: true,
-      shouldDownloadVideos: false,
-      shouldDownloadCovers: false,
-      shouldDownloadAvatars: false,
-    };
+    if (stage === "discover") {
+      return { searchQueries: [o.query], searchSection: "/video", resultsPerPage: Math.min(o.limit * 4, 100), ...noDownloads };
+    }
+    return { profiles: o.handles, profileScrapeSections: ["videos"], resultsPerPage: RECENT_POSTS, profileSorting: "latest", excludePinnedPosts: true, ...noDownloads };
   }
-  return {
-    search: query,
-    searchType: env.APIFY_INSTAGRAM_SEARCH_TYPE || "user",
-    searchLimit: Math.min(limit, 250),
-    resultsType: "details",
-    resultsLimit: RECENT_POSTS,
-  };
+  if (stage === "discover") {
+    return { search: o.query, searchType: "hashtag", searchLimit: 3, resultsType: "posts", resultsLimit: Math.min(Math.max(o.limit * 2, 20), 60) };
+  }
+  if (o.handles && o.handles.length > 0) {
+    return { directUrls: o.handles.map((h) => `https://www.instagram.com/${h}/`), resultsType: "details", resultsLimit: RECENT_POSTS };
+  }
+  // Fallback when hashtag discovery finds nobody: account search by keyword.
+  return { search: o.query, searchType: env.APIFY_INSTAGRAM_SEARCH_TYPE || "user", searchLimit: Math.min(o.limit, 250), resultsType: "details", resultsLimit: RECENT_POSTS };
 }
 
 async function apify<T>(path: string, token: string, init?: RequestInit): Promise<T> {
@@ -47,42 +55,85 @@ async function apify<T>(path: string, token: string, init?: RequestInit): Promis
   return body as T;
 }
 
-export async function startRun(platform: Platform, query: string, limit: number, env: Env): Promise<string> {
-  const token = env.APIFY_TOKEN!;
+export async function startRun(platform: Platform, stage: JobStage, o: StageOptions, env: Env): Promise<string> {
   const cap = Number(env.APIFY_MAX_CHARGE_USD || "0.5");
   const qs = new URLSearchParams({ maxTotalChargeUsd: String(cap) });
-  const res = await apify<{ data: { id: string } }>(`/acts/${actorFor(platform, env)}/runs?${qs}`, token, {
+  const res = await apify<{ data: { id: string } }>(`/acts/${actorFor(platform, env)}/runs?${qs}`, env.APIFY_TOKEN!, {
     method: "POST",
-    body: JSON.stringify(buildInput(platform, query, limit, env)),
+    body: JSON.stringify(buildInput(platform, stage, o, env)),
   });
   return res.data.id;
 }
 
 export type RunState = { status: "running" } | { status: "done"; items: unknown[] } | { status: "failed"; message: string };
 
-export async function checkRun(runId: string, env: Env): Promise<RunState> {
+export async function runItems(runId: string, env: Env): Promise<RunState> {
   const token = env.APIFY_TOKEN!;
-  const run = await apify<{ data: { status: string; defaultDatasetId: string; statusMessage?: string } }>(
-    `/actor-runs/${encodeURIComponent(runId)}`,
-    token,
-  );
+  const run = await apify<{ data: { status: string; defaultDatasetId: string; statusMessage?: string } }>(`/actor-runs/${encodeURIComponent(runId)}`, token);
   const s = run.data.status;
   if (s === "READY" || s === "RUNNING") return { status: "running" };
-  if (s !== "SUCCEEDED") return { status: "failed", message: run.data.statusMessage || `The search run ended with status ${s}.` };
+  // A run stopped by the spend cap still has useful results.
+  if (s !== "SUCCEEDED" && s !== "ABORTED" && s !== "TIMED-OUT") {
+    return { status: "failed", message: run.data.statusMessage || `The search run ended with status ${s}.` };
+  }
   const res = await fetch(`${API}/datasets/${run.data.defaultDatasetId}/items?clean=true&format=json`, {
     headers: { Authorization: `Bearer ${token}` },
     cache: "no-store",
   });
   if (!res.ok) return { status: "failed", message: `Couldn't read results (Apify returned ${res.status}).` };
-  return { status: "done", items: (await res.json()) as unknown[] };
+  const items = (await res.json()) as unknown[];
+  if (items.length === 0 && s !== "SUCCEEDED") return { status: "failed", message: run.data.statusMessage || `The search run ended with status ${s}.` };
+  return { status: "done", items };
 }
 
-/* ---------- Normalizers ---------- */
+/* ---------- discovery: who is making this content ---------- */
 
-type Rec = Record<string, any>;
+export interface Discovery {
+  handles: string[];
+  /** Country per handle, from where their niche videos were posted */
+  countries: Record<string, string>;
+}
+
+function rankAuthors(entries: Array<{ handle: string; plays: number }>, limit: number): string[] {
+  const agg = new Map<string, { n: number; plays: number; first: number }>();
+  entries.forEach((e, i) => {
+    const a = agg.get(e.handle);
+    if (a) { a.n++; a.plays += e.plays; }
+    else agg.set(e.handle, { n: 1, plays: e.plays, first: i });
+  });
+  return [...agg.entries()]
+    .sort((a, b) => b[1].n - a[1].n || b[1].plays - a[1].plays || a[1].first - b[1].first)
+    .slice(0, limit)
+    .map(([h]) => h);
+}
+
+export function discoverTikTok(items: unknown[], limit: number): Discovery {
+  const rows = (items as Rec[]).filter((v) => v?.authorMeta?.name && !v.authorMeta.privateAccount);
+  const handles = rankAuthors(rows.map((v) => ({ handle: v.authorMeta.name, plays: toNum(v.playCount) ?? 0 })), limit);
+  const countries: Record<string, string> = {};
+  for (const h of handles) {
+    const c = mode(rows.filter((v) => v.authorMeta.name === h).map((v) => v.locationCreated));
+    if (c) countries[h] = c;
+  }
+  return { handles, countries };
+}
+
+export function discoverInstagram(items: unknown[], limit: number): Discovery {
+  const rows = (items as Rec[]).filter((p) => typeof p?.ownerUsername === "string");
+  return {
+    handles: rankAuthors(rows.map((p) => ({ handle: p.ownerUsername, plays: (toNum(p.likesCount) ?? 0) + (toNum(p.videoViewCount) ?? 0) })), limit),
+    countries: {},
+  };
+}
+
+export function discover(platform: Platform, items: unknown[], limit: number): Discovery {
+  return platform === "tiktok" ? discoverTikTok(items, limit) : discoverInstagram(items, limit);
+}
+
+/* ---------- profiles: how they perform now ---------- */
 
 /** clockworks/tiktok-scraper returns one item per video, with the author nested in authorMeta. */
-export function normalizeTikTok(items: unknown[]): Creator[] {
+export function normalizeTikTok(items: unknown[], hints: Record<string, string> = {}, now?: number): Creator[] {
   const byAuthor = new Map<string, { meta: Rec; videos: Rec[] }>();
   for (const raw of items as Rec[]) {
     const meta: Rec | undefined = raw?.authorMeta ?? (raw?.fans !== undefined ? raw : undefined);
@@ -93,12 +144,16 @@ export function normalizeTikTok(items: unknown[]): Creator[] {
     byAuthor.set(handle, entry);
   }
   const creators = [...byAuthor.entries()].map(([handle, { meta, videos }]) => {
-    const posts: PostStats[] = videos.slice(0, RECENT_POSTS).map((v) => ({
+    const posts: PostInput[] = videos.slice(0, RECENT_POSTS).map((v) => ({
       views: toNum(v.playCount),
       likes: toNum(v.diggCount),
       comments: toNum(v.commentCount),
+      date: v.createTimeISO ?? (toNum(v.createTime) ? new Date(v.createTime * 1000).toISOString() : null),
+      caption: v.text ?? "",
+      markedSponsored: v.isAd === true || v.isSponsored === true,
+      url: v.webVideoUrl ?? null,
     }));
-    const country = mode(videos.map((v) => v.locationCreated)) ?? (meta.region ? String(meta.region) : null);
+    const country = mode(videos.map((v) => v.locationCreated)) ?? hints[handle] ?? (meta.region ? String(meta.region) : null);
     return buildCreator({
       platform: "tiktok",
       handle,
@@ -106,31 +161,41 @@ export function normalizeTikTok(items: unknown[]): Creator[] {
       url: meta.profileUrl || `https://www.tiktok.com/@${handle}`,
       avatar: meta.avatar ?? null,
       bio: meta.signature ?? "",
+      contactText: typeof meta.bioLink === "string" ? meta.bioLink : meta.bioLink?.link ?? "",
       country,
       countrySource: "posts",
+      language: mode(videos.map((v) => v.textLanguage)),
       followers: toNum(meta.fans),
       posts,
       verified: meta.verified,
+      seller: meta.ttSeller === true,
+      now,
     });
   });
   return dedupe(creators);
 }
 
+const SHOP_CATEGORY = /(shopping|retail|store|clothing|product\/service|brand|restaurant|company|bank|financial service|loan|real estate|agency|hotel|grocery|cosmetics store)/i;
+
 /** apify/instagram-scraper with resultsType "details" returns one item per profile. */
-export function normalizeInstagram(items: unknown[]): Creator[] {
+export function normalizeInstagram(items: unknown[], now?: number): Creator[] {
   const creators: Creator[] = [];
   for (const raw of items as Rec[]) {
     const handle: string | undefined = raw?.username;
-    if (!handle || raw.followersCount === undefined) continue;
+    if (!handle || raw.followersCount === undefined || raw.private === true) continue;
     const latest: Rec[] = Array.isArray(raw.latestPosts) ? raw.latestPosts.slice(0, RECENT_POSTS) : [];
-    const posts: PostStats[] = latest.map((p) => ({
-      views: toNum(p.videoViewCount ?? p.videoPlayCount),
+    const posts: PostInput[] = latest.map((p) => ({
+      views: toNum(p.videoViewCount ?? p.videoPlayCount ?? p.igPlayCount ?? p.playCount),
       likes: toNum(p.likesCount),
       comments: toNum(p.commentsCount),
+      date: p.timestamp ?? null,
+      caption: p.caption ?? "",
+      markedSponsored: p.isSponsored === true || p.paidPartnership === true || p.isPaidPartnership === true,
+      url: p.url ?? (p.shortCode ? `https://www.instagram.com/p/${p.shortCode}/` : null),
     }));
-    let country: string | null = null;
     const addr = raw.businessAddress;
-    if (addr && typeof addr === "object" && typeof addr.country_code === "string") country = addr.country_code;
+    const country = addr && typeof addr === "object" && typeof addr.country_code === "string" ? addr.country_code : null;
+    const links = [raw.externalUrl, ...(Array.isArray(raw.externalUrls) ? raw.externalUrls.map((u: Rec) => u?.url) : [])].filter(Boolean).join(" ");
     creators.push(
       buildCreator({
         platform: "instagram",
@@ -139,17 +204,20 @@ export function normalizeInstagram(items: unknown[]): Creator[] {
         url: raw.url || `https://www.instagram.com/${handle}/`,
         avatar: raw.profilePicUrl ?? null,
         bio: raw.biography ?? "",
+        contactText: `${links} ${raw.businessEmail ?? ""}`,
         country,
         countrySource: "profile",
         followers: toNum(raw.followersCount),
         posts,
         verified: raw.verified,
+        seller: raw.isBusinessAccount === true && SHOP_CATEGORY.test(raw.businessCategoryName ?? ""),
+        now,
       }),
     );
   }
   return dedupe(creators);
 }
 
-export function normalize(platform: Platform, items: unknown[]): Creator[] {
-  return platform === "tiktok" ? normalizeTikTok(items) : normalizeInstagram(items);
+export function normalize(platform: Platform, items: unknown[], hints: Record<string, string> = {}): Creator[] {
+  return platform === "tiktok" ? normalizeTikTok(items, hints) : normalizeInstagram(items);
 }

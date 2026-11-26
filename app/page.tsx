@@ -2,18 +2,20 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import RangeHistogram from "./components/RangeHistogram.tsx";
+import CreatorPanel from "./components/CreatorPanel.tsx";
 import { COUNTRIES, countryName, flag } from "@/lib/countries.ts";
 import { cpm, dedupe } from "@/lib/metrics.ts";
+import { RISING } from "@/lib/signals.ts";
 import {
-  applyFilters, compact, domainOf, emptyFilters, METRICS, metricValue, money, pct, SCALE, sortCreators, toCsv,
-  type Domain, type ErBasis, type Filters, type Metric, type SortKey,
+  applyFilters, baseFilter, compact, domainOf, emptyFilters, INACTIVE_DAYS, METRICS, metricValue, money, passesSignals, pct, SCALE,
+  sortCreators, toCsv, type Domain, type ErBasis, type Filters, type Metric, type Signals, type SortKey,
 } from "@/lib/filters.ts";
 import { PLATFORM_LABEL, PLATFORMS, type Creator, type Job, type JobResponse, type Platform, type SearchResponse } from "@/lib/types.ts";
 
 const KEY_STORE = "scout-key";
 const SHORTLIST_STORE = "scout-shortlist";
 const POLL_MS = 5000;
-const POLL_LIMIT_MS = 6 * 60 * 1000;
+const POLL_LIMIT_MS = 8 * 60 * 1000;
 
 type Access = "sample" | "live" | "denied";
 interface JobState extends Job { status: "running" | "done" | "failed"; message?: string; startedAt: number }
@@ -35,12 +37,25 @@ function save(key: string, value: unknown) {
   }
 }
 
-const METRIC_LABEL: Record<Metric, string> = {
-  followers: "Followers",
-  avgViews: "Average views",
-  avgLikes: "Average likes",
-  er: "Engagement rate",
+const METRIC_LABEL: Record<Metric, string> = { followers: "Followers", avgViews: "Average views", er: "Engagement rate" };
+
+const SIGNAL_LABEL: Record<keyof Signals, { label: string; hint: string }> = {
+  rising: { label: "Rising", hint: `Breakout score of ${RISING} or more` },
+  noDeals: { label: "No brand deals yet", hint: "None of their recent posts are sponsored" },
+  noManager: { label: "No manager listed", hint: "Bio doesn't mention a manager or agency" },
+  hideInactive: { label: "Posted recently", hint: `Posted in the last ${INACTIVE_DAYS} days` },
+  hideBusiness: { label: "Hide shops and companies", hint: "Bio or account type reads like a store or business" },
+  hideTiny: { label: "Hide accounts under 1K followers", hint: "Filters out brand-new and dormant accounts" },
 };
+const SIGNAL_ORDER: (keyof Signals)[] = ["rising", "noDeals", "noManager", "hideInactive", "hideBusiness", "hideTiny"];
+
+function stageText(j: JobState): string {
+  if (j.status === "failed") return j.message || "search failed.";
+  if (j.status === "done") return j.message || "results are in.";
+  return j.stage === "discover"
+    ? "is finding creators who post about this niche. This takes about a minute."
+    : "is reading their recent posts. Results appear here as soon as they're ready.";
+}
 
 export default function Home() {
   // --- access ---
@@ -68,8 +83,9 @@ export default function Home() {
   const [filters, setFilters] = useState<Filters>(emptyFilters(PLATFORMS));
   const [basis, setBasis] = useState<ErBasis>("followers");
   const [fee, setFee] = useState(0);
-  const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "followers", dir: "desc" });
+  const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "breakout", dir: "desc" });
   const [shortlist, setShortlist] = useState<Set<string>>(new Set());
+  const [openId, setOpenId] = useState<string | null>(null);
   const searchSeq = useRef(0);
   const [railOpen, setRailOpen] = useState(true);
   useEffect(() => {
@@ -121,8 +137,8 @@ export default function Home() {
     if (platforms.length === 0) return setFormError("Pick at least one platform.");
     const seq = ++searchSeq.current;
     setSearching(true);
-    setCreators([]); setJobs([]); setNotes([]);
-    setFilters(emptyFilters(platforms));
+    setCreators([]); setJobs([]); setNotes([]); setOpenId(null);
+    setFilters((f) => ({ ...emptyFilters(platforms), signals: f.signals }));
     try {
       const res = await fetch("/api/search", {
         method: "POST",
@@ -148,7 +164,7 @@ export default function Home() {
     }
   }
 
-  // Poll Apify runs for Instagram and TikTok
+  // Poll Apify runs for Instagram and TikTok. A discovery run hands off to a profiles run.
   const running = jobs.filter((j) => j.status === "running");
   const runningKey = running.map((j) => j.runId).join(",");
   const jobsRef = useRef(jobs);
@@ -160,15 +176,19 @@ export default function Home() {
     const timer = setTimeout(async () => {
       for (const job of jobsRef.current.filter((j) => j.status === "running")) {
         if (Date.now() - job.startedAt > POLL_LIMIT_MS) {
-          setJobs((cur) => cur.map((j) => (j.runId === job.runId ? { ...j, status: "failed", message: "This is taking longer than 6 minutes. Check the run in your Apify console." } : j)));
+          setJobs((cur) => cur.map((j) => (j.runId === job.runId ? { ...j, status: "failed", message: "is taking longer than 8 minutes. Check the run in your Apify console." } : j)));
           continue;
         }
         try {
-          const res = await fetch(`/api/jobs/${job.platform}/${job.runId}`, { headers: headers() });
+          const qs = new URLSearchParams({ stage: job.stage, limit: String(job.limit), q: job.query, ...(job.from ? { from: job.from } : {}) });
+          const res = await fetch(`/api/jobs/${job.platform}/${job.runId}?${qs}`, { headers: headers() });
           const body = (await res.json()) as JobResponse;
           if (seq !== searchSeq.current) return;
-          if (body.status === "done") setCreators((cur) => dedupe([...cur, ...body.creators]));
-          if (body.status !== "running") {
+          if (body.creators?.length) setCreators((cur) => dedupe([...cur, ...body.creators]));
+          if (body.next) {
+            const next = body.next;
+            setJobs((cur) => cur.map((j) => (j.runId === job.runId ? { ...next, status: "running", startedAt: j.startedAt } : j)));
+          } else if (body.status !== "running") {
             setJobs((cur) => cur.map((j) => (j.runId === job.runId ? { ...j, status: body.status, message: body.message } : j)));
           }
         } catch {
@@ -183,9 +203,7 @@ export default function Home() {
   // --- derived ---
   const domains = useMemo(() => {
     const d = {} as Record<Metric, Domain>;
-    for (const m of METRICS) {
-      d[m] = domainOf(creators.map((c) => metricValue(c, m, basis)).filter((v): v is number => v !== null), SCALE[m]);
-    }
+    for (const m of METRICS) d[m] = domainOf(creators.map((c) => metricValue(c, m, basis)).filter((v): v is number => v !== null), SCALE[m]);
     return d;
   }, [creators, basis]);
 
@@ -194,21 +212,37 @@ export default function Home() {
     [creators, filters, domains, basis, shortlist, sort, fee],
   );
 
+  // What the sliders and counts are drawn from: everything except the sliders themselves.
+  const pool = useMemo(() => baseFilter(creators, filters, shortlist), [creators, filters, shortlist]);
+
+  const signalCounts = useMemo(() => {
+    const out = {} as Record<keyof Signals, number>;
+    const others = creators.filter((c) => filters.platforms.includes(c.platform));
+    for (const s of SIGNAL_ORDER) {
+      out[s] = others.filter((c) => passesSignals(c, { ...filters.signals, [s]: true })).length;
+    }
+    return out;
+  }, [creators, filters.platforms, filters.signals]);
+
   const countryCounts = useMemo(() => {
     const m = new Map<string, number>();
     let unknown = 0;
     for (const c of creators) {
-      if (!filters.platforms.includes(c.platform)) continue;
+      if (!filters.platforms.includes(c.platform) || !passesSignals(c, filters.signals)) continue;
       if (c.country) m.set(c.country, (m.get(c.country) ?? 0) + 1);
       else unknown++;
     }
     return { list: [...m.entries()].sort((a, b) => b[1] - a[1]), unknown };
-  }, [creators, filters.platforms]);
+  }, [creators, filters.platforms, filters.signals]);
 
   const resultPlatforms = PLATFORMS.filter((p) => creators.some((c) => c.platform === p));
+  const open = openId ? creators.find((c) => c.id === openId) ?? null : null;
 
   function setRange(m: Metric, r: { lo: number; hi: number }) {
     setFilters((f) => ({ ...f, ranges: { ...f.ranges, [m]: r } }));
+  }
+  function setSignal(s: keyof Signals, on: boolean) {
+    setFilters((f) => ({ ...f, signals: { ...f.signals, [s]: on } }));
   }
   function toggleCountry(code: string) {
     setFilters((f) => ({ ...f, countries: f.countries.includes(code) ? f.countries.filter((c) => c !== code) : [...f.countries, code] }));
@@ -221,8 +255,8 @@ export default function Home() {
       return next;
     });
   }
-  function sortBy(key: SortKey) {
-    setSort((s) => (s.key === key ? { key, dir: s.dir === "desc" ? "asc" : "desc" } : { key, dir: key === "name" || key === "cpm" ? "asc" : "desc" }));
+  function sortBy(k: SortKey) {
+    setSort((s) => (s.key === k ? { key: k, dir: s.dir === "desc" ? "asc" : "desc" } : { key: k, dir: k === "name" || k === "cpm" || k === "brandDeals" ? "asc" : "desc" }));
   }
   function exportCsv() {
     const blob = new Blob([toCsv(visible, fee)], { type: "text/csv;charset=utf-8" });
@@ -233,14 +267,17 @@ export default function Home() {
     URL.revokeObjectURL(a.href);
   }
 
-  const fmt: Record<Metric, (n: number) => string> = { followers: compact, avgViews: compact, avgLikes: compact, er: pct };
-  const anyFilter = METRICS.some((m) => filters.ranges[m].lo > 0 || filters.ranges[m].hi < 1) || filters.countries.length > 0 || !filters.includeUnknownCountry || filters.shortlistOnly || filters.platforms.length < resultPlatforms.length;
+  const fmt: Record<Metric, (n: number) => string> = { followers: compact, avgViews: compact, er: pct };
+  const anyFilter =
+    METRICS.some((m) => filters.ranges[m].lo > 0 || filters.ranges[m].hi < 1) ||
+    filters.countries.length > 0 || !filters.includeUnknownCountry || filters.shortlistOnly ||
+    filters.platforms.length < resultPlatforms.length || SIGNAL_ORDER.some((s) => s !== "hideBusiness" && s !== "hideTiny" && filters.signals[s]);
 
-  const sortHeader = (key: SortKey, label: string, numeric = true) => (
-    <th scope="col" className={numeric ? "num" : undefined} aria-sort={sort.key === key ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}>
-      <button type="button" onClick={() => sortBy(key)}>
+  const sortHeader = (k: SortKey, label: string, numeric = true) => (
+    <th scope="col" className={numeric ? "num" : undefined} aria-sort={sort.key === k ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}>
+      <button type="button" onClick={() => sortBy(k)}>
         {label}
-        <span className="sort-mark" aria-hidden="true">{sort.key === key ? (sort.dir === "asc" ? "▲" : "▼") : ""}</span>
+        <span className="sort-mark" aria-hidden="true">{sort.key === k ? (sort.dir === "asc" ? "▲" : "▼") : ""}</span>
       </button>
     </th>
   );
@@ -250,7 +287,7 @@ export default function Home() {
       <header className="top">
         <div className="brand">
           <h1>Scout</h1>
-          <p>Find creators on YouTube, Instagram and TikTok, then narrow them down by reach, engagement and country.</p>
+          <p>Find creators before they break out. Search YouTube, Instagram and TikTok by niche, then rank creators by momentum, brand-deal history and engagement.</p>
         </div>
         <div className="access">
           {access === "live" ? (
@@ -315,11 +352,8 @@ export default function Home() {
       {(jobs.length > 0 || notes.length > 0) && (
         <ul className="status" aria-live="polite">
           {jobs.map((j) => (
-            <li key={j.runId} className={`status-${j.status}`}>
-              <strong>{PLATFORM_LABEL[j.platform]}</strong>{" "}
-              {j.status === "running" && "is still searching. This usually takes 1 to 3 minutes, and results appear here as soon as they're ready."}
-              {j.status === "done" && "results are in."}
-              {j.status === "failed" && (j.message || "search failed.")}
+            <li key={`${j.platform}-${j.stage}`} className={`status-${j.status}`}>
+              <strong>{PLATFORM_LABEL[j.platform]}</strong> {stageText(j)}
             </li>
           ))}
           {notes.map((n) => (
@@ -336,9 +370,14 @@ export default function Home() {
             <>
               <p className="empty-lead">Search a niche to start a shortlist.</p>
               <p>
-                Scout pulls each creator&rsquo;s recent posts and works out their average views, likes and engagement, so you can compare accounts by how they perform now, not just by follower count.
-                {access !== "live" && " You're seeing sample data: the creators are invented, but the filters and math work exactly as they do on live results."}
+                Scout finds people who are actively posting about your niche, reads their latest posts and scores each one on the things a big database won&rsquo;t show you:
               </p>
+              <dl className="empty-signals">
+                <div><dt>Breakout score</dt><dd>Are their newest posts beating their older ones, and are views running ahead of their follower count?</dd></div>
+                <div><dt>Brand deals</dt><dd>How many recent posts are sponsored, so you can be someone&rsquo;s first partner.</dd></div>
+                <div><dt>Manager</dt><dd>Whether the bio lists a manager or agency, so you know who you&rsquo;ll be talking to.</dd></div>
+              </dl>
+              {access !== "live" && <p className="muted">You&rsquo;re seeing sample data. The creators are invented, but the scoring and filters work exactly as they do on live results.</p>}
             </>
           )}
         </section>
@@ -347,6 +386,23 @@ export default function Home() {
           <aside className="rail" aria-label="Filters">
             <details open={railOpen} onToggle={(e) => setRailOpen((e.target as HTMLDetailsElement).open)} className="rail-inner">
               <summary>Filters{anyFilter ? " (on)" : ""}</summary>
+
+              <fieldset className="rail-group">
+                <legend>Scout for</legend>
+                <ul className="signal-list">
+                  {SIGNAL_ORDER.map((s) => (
+                    <li key={s}>
+                      <label className="check">
+                        <input type="checkbox" checked={filters.signals[s]} onChange={(e) => setSignal(s, e.target.checked)} />
+                        <span>
+                          {SIGNAL_LABEL[s].label} <span className="chip-n">{signalCounts[s]}</span>
+                          <span className="check-hint">{SIGNAL_LABEL[s].hint}</span>
+                        </span>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              </fieldset>
 
               {resultPlatforms.length > 1 && (
                 <fieldset className="rail-group">
@@ -371,7 +427,7 @@ export default function Home() {
                   key={m}
                   label={METRIC_LABEL[m]}
                   hint={m === "er" ? (basis === "followers" ? "Likes and comments per post, divided by followers." : "Likes and comments per post, divided by views.") : m === "avgViews" ? "Instagram photos have no view count, so some creators show none." : undefined}
-                  values={creators.filter((c) => filters.platforms.includes(c.platform)).map((c) => metricValue(c, m, basis)).filter((v): v is number => v !== null)}
+                  values={pool.map((c) => metricValue(c, m, basis)).filter((v): v is number => v !== null)}
                   domain={domains[m]}
                   scale={SCALE[m]}
                   range={filters.ranges[m]}
@@ -391,9 +447,9 @@ export default function Home() {
                 </div>
                 <label className="check">
                   <input type="checkbox" checked={filters.includeUnknownCountry} onChange={(e) => setFilters((f) => ({ ...f, includeUnknownCountry: e.target.checked }))} />
-                  Include creators with no country listed ({countryCounts.unknown})
+                  <span>Include creators with no country listed ({countryCounts.unknown})</span>
                 </label>
-                <p className="rh-hint">YouTube countries come from the channel profile and TikTok countries from where recent videos were posted. Instagram only shows a country for business accounts.</p>
+                <p className="rh-hint">YouTube countries come from the channel profile and TikTok countries from where videos were posted. Instagram only shows a country for business accounts.</p>
               </fieldset>
 
               {anyFilter && (
@@ -428,7 +484,7 @@ export default function Home() {
                 </div>
                 <label className="check">
                   <input type="checkbox" checked={filters.shortlistOnly} onChange={(e) => setFilters((f) => ({ ...f, shortlistOnly: e.target.checked }))} />
-                  Shortlist only ({creators.filter((c) => shortlist.has(c.id)).length})
+                  <span>Shortlist only ({creators.filter((c) => shortlist.has(c.id)).length})</span>
                 </label>
                 <button type="button" className="btn" onClick={exportCsv} disabled={visible.length === 0}>Export CSV</button>
               </div>
@@ -443,16 +499,17 @@ export default function Home() {
                     <th scope="col">Country</th>
                     {sortHeader("followers", "Followers")}
                     {sortHeader("avgViews", "Avg views")}
-                    {sortHeader("avgLikes", "Avg likes")}
                     {sortHeader("er", "Engagement")}
+                    {sortHeader("breakout", "Breakout")}
+                    {sortHeader("brandDeals", "Brand deals")}
                     {fee > 0 && sortHeader("cpm", "CPM")}
-                    <th scope="col"><span className="sr-only">Profile</span></th>
                   </tr>
                 </thead>
                 <tbody>
                   {visible.map((c) => {
                     const er = basis === "followers" ? c.erFollowers : c.erViews;
                     const starred = shortlist.has(c.id);
+                    const rising = c.breakout !== null && c.breakout >= RISING;
                     return (
                       <tr key={c.id} className={starred ? "starred" : undefined}>
                         <td className="col-star">
@@ -461,35 +518,59 @@ export default function Home() {
                           </button>
                         </td>
                         <td className="who">
-                          <div className="who-top">
+                          <button type="button" className="who-open" onClick={() => setOpenId(c.id)}>
                             <span className="name">{c.name}</span>
-                            {c.verified && <span className="verified" title="Verified">✓</span>}
-                          </div>
+                            {c.verified && <span className="verified" aria-label="Verified">✓</span>}
+                            <span className="sr-only">, open details</span>
+                          </button>
                           <div className="who-sub">
                             <span className={`plat plat-${c.platform}`}>{PLATFORM_LABEL[c.platform]}</span>
                             <span className="handle">@{c.handle}</span>
                           </div>
-                          {c.bio && <p className="bio" title={c.bio}>{c.bio}</p>}
+                          <div className="flags">
+                            {rising && <span className="tag tag-rise">Rising</span>}
+                            {c.managed && <span className="tag">Manager listed</span>}
+                            {c.business && <span className="tag">Shop or company</span>}
+                            {c.daysSinceLastPost !== null && c.daysSinceLastPost > INACTIVE_DAYS && <span className="tag">Inactive</span>}
+                          </div>
                         </td>
                         <td className="country">{c.country ? <><span aria-hidden="true">{flag(c.country)}</span> {countryName(c.country)}</> : <span className="muted">Not listed</span>}</td>
                         <td className="num">{compact(c.followers)}</td>
                         <td className="num">{compact(c.avgViews)}</td>
-                        <td className="num">{compact(c.avgLikes)}</td>
                         <td className="num">{pct(er)}</td>
-                        {fee > 0 && <td className="num">{money(cpm(fee, c.avgViews))}</td>}
-                        <td className="open">
-                          {c.sample ? <span className="muted">Sample</span> : <a href={c.url} target="_blank" rel="noopener noreferrer">Open profile<span className="sr-only"> for {c.name} (new tab)</span></a>}
+                        <td className="num">
+                          {c.breakout === null ? "–" : (
+                            <span className={`meter${rising ? " meter-rise" : ""}`}>
+                              <span className="meter-bar" aria-hidden="true"><span style={{ width: `${c.breakout}%` }} /></span>
+                              {c.breakout}
+                            </span>
+                          )}
                         </td>
+                        <td className="num">{c.postsSampled ? <>{c.brandDeals}<span className="muted"> / {c.postsSampled}</span></> : "–"}</td>
+                        {fee > 0 && <td className="num">{money(cpm(fee, c.avgViews))}</td>}
                       </tr>
                     );
                   })}
                 </tbody>
               </table>
-              {visible.length === 0 && creators.length > 0 && <p className="none">No creators match these filters. Widen a range or clear the country filter.</p>}
+              {visible.length === 0 && creators.length > 0 && <p className="none">No creators match these filters. Turn off a &ldquo;Scout for&rdquo; filter or widen a range.</p>}
             </div>
-            <p className="footnote">Averages use each creator&rsquo;s most recent posts (up to 10 on YouTube, 8 on Instagram and TikTok). CPM is your fee divided by average views, per thousand views.</p>
+            <p className="footnote">
+              Averages use each creator&rsquo;s most recent posts (up to 10 on YouTube, 8 on Instagram and TikTok). Breakout compares their 3 newest posts with the ones before and checks views against followers. 50 means typical, {RISING} or more means rising. Brand deals counts posts marked as ads or with sponsor language in the caption. CPM is your fee divided by average views, per thousand views.
+            </p>
           </main>
         </div>
+      )}
+
+      {open && (
+        <CreatorPanel
+          creator={open}
+          niche={searchedFor ?? query}
+          basis={basis}
+          starred={shortlist.has(open.id)}
+          onToggleStar={() => toggleShortlist(open.id)}
+          onClose={() => setOpenId(null)}
+        />
       )}
     </div>
   );

@@ -1,8 +1,21 @@
 # Scout
 
-Find creators on YouTube, Instagram and TikTok by niche, then filter them by followers, average views, average likes, engagement rate and country.
+**Find creators before they break out.** Search YouTube, Instagram and TikTok by niche, then rank creators by momentum, brand-deal history and engagement.
+
+Live: https://scout-hazel-theta.vercel.app (sample mode for visitors)
 
 Built by Mustafa Khan for scouting creators at Nexus Partners, and for any brand that wants to find creators without paying for a full influencer platform.
+
+## Why it exists
+
+Tools like Modash and HypeAuditor are built around huge creator databases, and they start at $199–$299 a month. They're good at finding creators who are already big. Scout is built for the opposite job: finding the ones who are about to be, and haven't been snapped up yet.
+
+- **Breakout score (0–100).** Compares the median of a creator's 3 newest posts with the posts before, and checks average views against followers. 50 is typical; 70+ is flagged as rising. The score is always explained in plain words: "Their 3 newest posts are getting 2.2× the views of the posts before them."
+- **Brand deals.** Counts recent posts marked as ads (TikTok `isAd`, YouTube paid-promotion flag, Instagram paid partnership) or with sponsor language in the caption. Filter to creators who've never done one, and be their first partner.
+- **Manager listed.** Flags bios that mention a manager, agency or management email. Agencies can filter to unrepresented creators to sign; brands know who they'll be negotiating with.
+- **Shop and company filter.** Hides stores and businesses that keyword searches tend to surface.
+- **First message.** The detail panel writes a short outreach DM from what Scout measured (their best organic post and its views), so it never invents a compliment.
+- **Pay per search.** A search costs cents on your own Apify account instead of a monthly subscription.
 
 ## What it does
 
@@ -15,11 +28,13 @@ Built by Mustafa Khan for scouting creators at Nexus Partners, and for any brand
 
 ## How the data works
 
-| Platform | Source | Country comes from |
-|---|---|---|
-| YouTube | Official YouTube Data API v3 | The channel's own profile setting |
-| TikTok | Apify actor `clockworks/tiktok-scraper` | Where recent videos were posted (most common) |
-| Instagram | Apify actor `apify/instagram-scraper` | The business address, when the account has one |
+| Platform | Source | How creators are found | Country comes from |
+|---|---|---|---|
+| YouTube | Official YouTube Data API v3 | Videos about the niche from the past year, ranked by channel | The channel's own profile setting |
+| TikTok | Apify `clockworks/tiktok-scraper` | Video search, then the top authors' latest videos | Where their videos were posted |
+| Instagram | Apify `apify/instagram-scraper` | Posts on the niche's hashtags, then the top accounts' profiles (falls back to account search) | The business address, when there is one |
+
+Searching posts first, then profiles, matters: searching accounts directly mostly matches usernames, which surfaces shops and dead accounts instead of people actively making the content.
 
 Instagram and TikTok don't offer a public creator search API, so Scout uses Apify scrapers for them. Those platforms' terms don't allow scraping, so keep live search for your own scouting at small scale. Don't open it up as a public service.
 
