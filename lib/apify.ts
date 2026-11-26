@@ -18,6 +18,8 @@ function actorFor(platform: Platform, env: Env): string {
 export interface StageOptions {
   query?: string;
   limit: number;
+  /** ISO-2 region to aim the search at */
+  region?: string | null;
   /** Handles to profile, for the profiles stage */
   handles?: string[];
 }
@@ -26,12 +28,34 @@ export interface StageOptions {
  * Hashtags to search for a niche: the whole phrase joined, then its trailing and leading pairs.
  * "small business finance" -> smallbusinessfinance, businessfinance, smallbusiness
  */
-export function hashtagsFor(query: string): string[] {
+export function hashtagsFor(query: string, region: string | null = null): string[] {
   const words = query.toLowerCase().replace(/[^\p{L}\p{N} ]/gu, " ").split(/\s+/).filter(Boolean);
   if (words.length === 0) return [];
-  const tags = [words.join("")];
+  const joined = words.join("");
+  const tags: string[] = [];
+  // A region adds the hashtags local creators actually use, e.g. #fashionsouthafrica, #safashion.
+  for (const place of region ? REGION_TAGS[region] ?? [] : []) tags.push(`${joined}${place}`, `${place}${joined}`);
+  tags.push(joined);
   if (words.length > 2) tags.push(words.slice(-2).join(""), words.slice(0, 2).join(""));
-  return [...new Set(tags)].filter((t) => t.length >= 3 && t.length <= 60).slice(0, 3);
+  return [...new Set(tags)].filter((t) => t.length >= 3 && t.length <= 60).slice(0, region ? 4 : 3);
+}
+
+/** Words local creators add to hashtags, by region. */
+export const REGION_TAGS: Record<string, string[]> = {
+  ZA: ["southafrica", "sa"], NG: ["nigeria", "naija"], GB: ["uk", "london"], US: ["usa"], CA: ["canada", "toronto"],
+  AU: ["australia"], KE: ["kenya"], GH: ["ghana"], IN: ["india"], AE: ["dubai", "uae"], IE: ["ireland"],
+  NZ: ["nz"], PK: ["pakistan"], SA: ["ksa", "riyadh"], DE: ["germany"], FR: ["france", "paris"], ES: ["spain"],
+  IT: ["italy"], NL: ["netherlands"], SE: ["sweden"], BR: ["brasil"], MX: ["mexico"], PH: ["ph"], ID: ["indonesia"],
+  SG: ["singapore", "sg"], JP: ["japan"], KR: ["korea"],
+};
+
+/** Rough Apify cost per creator returned, from measured runs (discovery + profile scrape). */
+export const COST_PER_CREATOR: Record<"tiktok" | "instagram", number> = { tiktok: 0.033, instagram: 0.008 };
+
+/** Spend cap for one run: enough for the creators asked for, never above the account's ceiling. */
+export function runCap(platform: "tiktok" | "instagram", stage: JobStage, limit: number, ceiling: number): number {
+  const share = stage === "discover" ? 0.35 : 0.65;
+  return Math.min(ceiling, Math.max(0.1, Math.round((0.05 + limit * COST_PER_CREATOR[platform] * share * 1.5) * 100) / 100));
 }
 
 /*
@@ -43,14 +67,16 @@ export function hashtagsFor(query: string): string[] {
 export function buildInput(platform: Platform, stage: JobStage, o: StageOptions, env: Env = {}): Record<string, unknown> {
   const noDownloads = { shouldDownloadVideos: false, shouldDownloadCovers: false, shouldDownloadAvatars: false, shouldDownloadSlideshowImages: false };
   if (platform === "tiktok") {
+    // TikTok shows search results for the country it thinks you're in, so a regional proxy localises them.
+    const where = o.region ? { proxyCountryCode: o.region } : {};
     if (stage === "discover") {
-      return { searchQueries: [o.query], searchSection: "/video", resultsPerPage: Math.min(o.limit * 3, 90), ...noDownloads };
+      return { searchQueries: [o.query], searchSection: "/video", resultsPerPage: Math.min(o.limit * 3, 150), ...where, ...noDownloads };
     }
-    return { profiles: o.handles, profileScrapeSections: ["videos"], resultsPerPage: RECENT_TIKTOK, profileSorting: "latest", excludePinnedPosts: true, ...noDownloads };
+    return { profiles: o.handles, profileScrapeSections: ["videos"], resultsPerPage: RECENT_TIKTOK, profileSorting: "latest", excludePinnedPosts: true, ...where, ...noDownloads };
   }
   if (stage === "discover") {
     return {
-      directUrls: hashtagsFor(o.query ?? "").map((t) => `https://www.instagram.com/explore/tags/${t}/`),
+      directUrls: hashtagsFor(o.query ?? "", o.region ?? null).map((t) => `https://www.instagram.com/explore/tags/${t}/`),
       resultsType: "posts",
       resultsLimit: Math.min(Math.max(o.limit * 2, 15), 40),
     };
@@ -74,8 +100,9 @@ async function apify<T>(path: string, token: string, init?: RequestInit): Promis
 }
 
 export async function startRun(platform: Platform, stage: JobStage, o: StageOptions, env: Env): Promise<string> {
-  const cap = Number(env.APIFY_MAX_CHARGE_USD || "0.5");
-  const qs = new URLSearchParams({ maxTotalChargeUsd: String(cap) });
+  const ceiling = Number(env.APIFY_MAX_CHARGE_USD || "2");
+  if (platform === "youtube") throw new Error("YouTube doesn't use Apify");
+  const qs = new URLSearchParams({ maxTotalChargeUsd: String(runCap(platform, stage, o.limit, ceiling)) });
   const res = await apify<{ data: { id: string } }>(`/acts/${actorFor(platform, env)}/runs?${qs}`, env.APIFY_TOKEN!, {
     method: "POST",
     body: JSON.stringify(buildInput(platform, stage, o, env)),

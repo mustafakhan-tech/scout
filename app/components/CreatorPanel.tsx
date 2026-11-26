@@ -6,6 +6,8 @@ import { ago, compact, pct, times, type ErBasis } from "@/lib/filters.ts";
 import { outreachMessage, type Sender } from "@/lib/outreach.ts";
 import { MATURE_DAYS, maturePosts, performanceMetric, REACH_PAR, RISING } from "@/lib/signals.ts";
 import { PLATFORM_LABEL, type Creator } from "@/lib/types.ts";
+import type { Gender } from "@/lib/gender.ts";
+import { GENDER_LABEL, GENDER_SOURCE_LABEL } from "@/lib/filters.ts";
 
 const SENDER_STORE = "scout-sender";
 
@@ -35,9 +37,13 @@ interface Props {
   starred: boolean;
   onToggleStar: () => void;
   onClose: () => void;
+  /** Correct the estimated gender; null goes back to Scout's estimate */
+  onSetGender: (g: Gender | null) => void;
+  /** Scout's own estimate, before any correction */
+  estimated: Gender;
 }
 
-export default function CreatorPanel({ creator: c, niche, basis, starred, onToggleStar, onClose }: Props) {
+export default function CreatorPanel({ creator: c, niche, basis, starred, onToggleStar, onClose, onSetGender, estimated }: Props) {
   const closeRef = useRef<HTMLButtonElement>(null);
   const [sender, setSender] = useState<Sender>({ name: "", company: "" });
   const [copied, setCopied] = useState(false);
@@ -93,7 +99,7 @@ export default function CreatorPanel({ creator: c, niche, basis, starred, onTogg
             <p className="who-sub">
               <span className={`plat plat-${c.platform}`}>{PLATFORM_LABEL[c.platform]}</span>
               <span className="handle">@{c.handle}</span>
-              {c.country && <span>{flag(c.country)} {countryName(c.country)}</span>}
+              {c.country && <span>{flag(c.country)} {countryName(c.country)}{c.countrySource === "bio" ? " (from bio)" : ""}</span>}
             </p>
           </div>
           <button ref={closeRef} type="button" className="panel-close" onClick={onClose} aria-label="Close creator details">✕</button>
@@ -137,6 +143,18 @@ export default function CreatorPanel({ creator: c, niche, basis, starred, onTogg
           <div><dt>Last post</dt><dd>{ago(c.daysSinceLastPost)}</dd></div>
           <div><dt>Posting</dt><dd>{c.postsPerWeek === null ? "–" : `${c.postsPerWeek.toFixed(1)} a week`}</dd></div>
           {c.language && <div><dt>Posts in</dt><dd>{languageName(c.language)}</dd></div>}
+          <div className="fact-wide">
+            <dt><label htmlFor="gender-fix">Gender</label></dt>
+            <dd>
+              <select id="gender-fix" value={c.genderSource === "you" ? c.gender : "auto"} onChange={(e) => onSetGender(e.target.value === "auto" ? null : (e.target.value as Gender))}>
+                <option value="auto">Scout&rsquo;s estimate: {GENDER_LABEL[estimated]}</option>
+                <option value="woman">Woman</option>
+                <option value="man">Man</option>
+                <option value="unknown">Not sure</option>
+              </select>
+              <span className="fact-note">{c.genderSource && c.genderSource !== "you" ? `Based on ${GENDER_SOURCE_LABEL[c.genderSource]}` : c.genderSource === "you" ? "Set by you" : "Nothing in the profile says"}</span>
+            </dd>
+          </div>
         </dl>
 
         {chartPosts.length > 0 && (

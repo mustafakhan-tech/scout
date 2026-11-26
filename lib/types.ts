@@ -1,3 +1,5 @@
+import type { Gender, GenderSource } from "./gender.ts";
+
 export type Platform = "youtube" | "instagram" | "tiktok";
 
 export const PLATFORMS: Platform[] = ["youtube", "instagram", "tiktok"];
@@ -9,7 +11,7 @@ export const PLATFORM_LABEL: Record<Platform, string> = {
 };
 
 /** Where a creator's country came from. */
-export type CountrySource = "profile" | "posts" | "sample";
+export type CountrySource = "profile" | "posts" | "bio" | "sample";
 
 export interface Post {
   /** ISO date, when the platform gives one */
@@ -64,6 +66,9 @@ export interface Creator {
   business: boolean;
   /** Average views are tiny next to follower count */
   lowReach: boolean;
+  /** Estimated from pronouns, bio words or first name; never from photos */
+  gender: Gender;
+  genderSource: GenderSource;
   daysSinceLastPost: number | null;
   postsPerWeek: number | null;
 
@@ -91,6 +96,8 @@ export interface Job {
   from?: string;
   limit: number;
   query: string;
+  /** ISO-2 region the search is aimed at */
+  region?: string | null;
 }
 
 export interface ProviderError {

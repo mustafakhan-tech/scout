@@ -375,3 +375,11 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; color:
   .verdict, .deal-head h1 { font-size: 40px; }
   .deal-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+.cost-note { flex-basis: 100%; margin: 0; font-size: 13px; color: var(--muted); }
+.cost-high { color: #7a5d00; }
+.seg-wide { display: flex; margin-bottom: 8px; }
+.seg-wide label { flex: 1; text-align: center; padding: 6px 8px; }
+.fact-wide { grid-column: span 2; }
+.fact-wide select { height: 32px; border: 1px solid var(--rule); border-radius: var(--radius-s); background: #fff; padding: 0 8px; font-weight: 600; }
+.fact-note { display: block; font-size: 12px; font-weight: 400; color: var(--muted); margin-top: 2px; }

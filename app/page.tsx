@@ -6,7 +6,10 @@ import CreatorPanel from "./components/CreatorPanel.tsx";
 import { COUNTRIES, countryName, flag, languageName } from "@/lib/countries.ts";
 import { cpm, dedupe } from "@/lib/metrics.ts";
 import { RISING } from "@/lib/signals.ts";
+import { COST_PER_CREATOR } from "@/lib/apify.ts";
+import type { Gender } from "@/lib/gender.ts";
 import {
+  GENDER_LABEL, GENDER_SOURCE_LABEL,
   applyFilters, baseFilter, compact, domainOf, emptyFilters, INACTIVE_DAYS, METRICS, metricValue, money, passesSignals, pct, SCALE,
   sortCreators, toCsv, type Domain, type ErBasis, type Filters, type Metric, type Signals, type SortKey,
 } from "@/lib/filters.ts";
@@ -14,6 +17,7 @@ import { PLATFORM_LABEL, PLATFORMS, type Creator, type Job, type JobResponse, ty
 
 const KEY_STORE = "scout-key";
 const SHORTLIST_STORE = "scout-shortlist";
+const GENDER_STORE = "scout-gender";
 const POLL_MS = 5000;
 const POLL_LIMIT_MS = 8 * 60 * 1000;
 
@@ -87,6 +91,7 @@ export default function Home() {
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "breakout", dir: "desc" });
   const [shortlist, setShortlist] = useState<Set<string>>(new Set());
   const [openId, setOpenId] = useState<string | null>(null);
+  const [genderFix, setGenderFix] = useState<Record<string, Gender>>({});
   const searchSeq = useRef(0);
   const [railOpen, setRailOpen] = useState(true);
   useEffect(() => {
@@ -105,6 +110,7 @@ export default function Home() {
   useEffect(() => {
     const stored = load<string>(KEY_STORE, "");
     setShortlist(new Set(load<string[]>(SHORTLIST_STORE, [])));
+    setGenderFix(load<Record<string, Gender>>(GENDER_STORE, {}));
     checkAccess(stored).then((a) => {
       if (a === "live") { setKey(stored); setAccess("live"); }
       else if (stored) save(KEY_STORE, "");
@@ -139,7 +145,13 @@ export default function Home() {
     const seq = ++searchSeq.current;
     setSearching(true);
     setCreators([]); setJobs([]); setNotes([]); setOpenId(null);
-    setFilters((f) => ({ ...emptyFilters(platforms), signals: f.signals }));
+    setFilters((f) => ({
+      ...emptyFilters(platforms),
+      signals: f.signals,
+      gender: f.gender,
+      includeUnknownGender: f.includeUnknownGender,
+      countries: region ? [region] : [],
+    }));
     try {
       const res = await fetch("/api/search", {
         method: "POST",
@@ -181,7 +193,7 @@ export default function Home() {
           continue;
         }
         try {
-          const qs = new URLSearchParams({ stage: job.stage, limit: String(job.limit), q: job.query, ...(job.from ? { from: job.from } : {}) });
+          const qs = new URLSearchParams({ stage: job.stage, limit: String(job.limit), q: job.query, ...(job.from ? { from: job.from } : {}), ...(job.region ? { region: job.region } : {}) });
           const res = await fetch(`/api/jobs/${job.platform}/${job.runId}?${qs}`, { headers: headers() });
           const body = (await res.json()) as JobResponse;
           if (seq !== searchSeq.current) return;
@@ -202,33 +214,45 @@ export default function Home() {
   }, [runningKey, tick, headers]);
 
   // --- derived ---
+  // Your own gender corrections win over Scout's estimate.
+  const all = useMemo(
+    () => creators.map((c) => (genderFix[c.id] ? { ...c, gender: genderFix[c.id], genderSource: "you" as const } : c)),
+    [creators, genderFix],
+  );
+  const genderCounts = useMemo(() => {
+    const n = { woman: 0, man: 0, unknown: 0 };
+    for (const c of all) if (filters.platforms.includes(c.platform) && passesSignals(c, filters.signals)) n[c.gender]++;
+    return n;
+  }, [all, filters.platforms, filters.signals]);
+  const estCost = (platforms.includes("tiktok") ? limit * COST_PER_CREATOR.tiktok : 0) + (platforms.includes("instagram") ? limit * COST_PER_CREATOR.instagram : 0);
+
   const domains = useMemo(() => {
     const d = {} as Record<Metric, Domain>;
-    for (const m of METRICS) d[m] = domainOf(creators.map((c) => metricValue(c, m, basis)).filter((v): v is number => v !== null), SCALE[m]);
+    for (const m of METRICS) d[m] = domainOf(all.map((c) => metricValue(c, m, basis)).filter((v): v is number => v !== null), SCALE[m]);
     return d;
-  }, [creators, basis]);
+  }, [all, basis]);
 
   const visible = useMemo(
-    () => sortCreators(applyFilters(creators, filters, domains, basis, shortlist), sort.key, sort.dir, basis, fee),
-    [creators, filters, domains, basis, shortlist, sort, fee],
+    () => sortCreators(applyFilters(all, filters, domains, basis, shortlist), sort.key, sort.dir, basis, fee),
+    [all, filters, domains, basis, shortlist, sort, fee],
   );
 
   // What the sliders and counts are drawn from: everything except the sliders themselves.
-  const pool = useMemo(() => baseFilter(creators, filters, shortlist), [creators, filters, shortlist]);
+  const pool = useMemo(() => baseFilter(all, filters, shortlist), [all, filters, shortlist]);
 
   const signalCounts = useMemo(() => {
     const out = {} as Record<keyof Signals, number>;
-    const others = creators.filter((c) => filters.platforms.includes(c.platform));
+    const others = all.filter((c) => filters.platforms.includes(c.platform));
     for (const s of SIGNAL_ORDER) {
       out[s] = others.filter((c) => passesSignals(c, { ...filters.signals, [s]: true })).length;
     }
     return out;
-  }, [creators, filters.platforms, filters.signals]);
+  }, [all, filters.platforms, filters.signals]);
 
   const countryCounts = useMemo(() => {
     const m = new Map<string, number>();
     let unknown = 0;
-    for (const c of creators) {
+    for (const c of all) {
       if (!filters.platforms.includes(c.platform) || !passesSignals(c, filters.signals)) continue;
       if (c.country) m.set(c.country, (m.get(c.country) ?? 0) + 1);
       else unknown++;
@@ -238,7 +262,7 @@ export default function Home() {
 
   const languageCounts = useMemo(() => {
     const m = new Map<string, number>();
-    for (const c of creators) {
+    for (const c of all) {
       if (!filters.platforms.includes(c.platform) || !passesSignals(c, filters.signals) || !c.language) continue;
       m.set(c.language, (m.get(c.language) ?? 0) + 1);
     }
@@ -246,7 +270,7 @@ export default function Home() {
   }, [creators, filters.platforms, filters.signals]);
 
   const resultPlatforms = PLATFORMS.filter((p) => creators.some((c) => c.platform === p));
-  const open = openId ? creators.find((c) => c.id === openId) ?? null : null;
+  const open = openId ? all.find((c) => c.id === openId) ?? null : null;
 
   function setRange(m: Metric, r: { lo: number; hi: number }) {
     setFilters((f) => ({ ...f, ranges: { ...f.ranges, [m]: r } }));
@@ -360,6 +384,13 @@ export default function Home() {
           </select>
         </div>
         <button type="submit" className="btn btn-primary" disabled={searching}>{searching ? "Searching…" : "Search"}</button>
+        {access === "live" && estCost > 0 && (
+          <p className={`cost-note${estCost > 1 ? " cost-high" : ""}`}>
+            Estimated Apify cost for this search: about ${estCost.toFixed(2)}
+            {estCost > 1 ? `, roughly ${Math.round((estCost / 5) * 100)}% of the free $5 a month. Try 10–20 per platform first.` : "."}
+            {region && platforms.some((p) => p !== "youtube") ? ` TikTok runs from ${countryName(region)}; Instagram adds local hashtags.` : ""}
+          </p>
+        )}
         {formError && <p className="err form-err" role="alert">{formError}</p>}
       </form>
 
@@ -418,6 +449,25 @@ export default function Home() {
                 </ul>
               </fieldset>
 
+              <fieldset className="rail-group">
+                <legend>Gender</legend>
+                <div className="seg seg-wide">
+                  {(["any", "woman", "man"] as const).map((g) => (
+                    <label key={g} className={filters.gender === g ? "on" : undefined}>
+                      <input type="radio" name="gender" checked={filters.gender === g} onChange={() => setFilters((f) => ({ ...f, gender: g }))} />
+                      {g === "any" ? "Any" : g === "woman" ? `Women ${genderCounts.woman}` : `Men ${genderCounts.man}`}
+                    </label>
+                  ))}
+                </div>
+                {filters.gender !== "any" && (
+                  <label className="check">
+                    <input type="checkbox" checked={filters.includeUnknownGender} onChange={(e) => setFilters((f) => ({ ...f, includeUnknownGender: e.target.checked }))} />
+                    <span>Include creators Scout can&rsquo;t tell ({genderCounts.unknown})</span>
+                  </label>
+                )}
+                <p className="rh-hint">Estimated from pronouns or words in the bio, then the first name. Never from photos. Open a creator to correct it.</p>
+              </fieldset>
+
               {resultPlatforms.length > 1 && (
                 <fieldset className="rail-group">
                   <legend>Show</legend>
@@ -463,7 +513,7 @@ export default function Home() {
                   <input type="checkbox" checked={filters.includeUnknownCountry} onChange={(e) => setFilters((f) => ({ ...f, includeUnknownCountry: e.target.checked }))} />
                   <span>Include creators with no country listed ({countryCounts.unknown})</span>
                 </label>
-                <p className="rh-hint">YouTube countries come from the channel profile. Instagram only shows one for business accounts, and TikTok rarely shares it, so use the language filter there.</p>
+                <p className="rh-hint">YouTube countries come from the channel profile. TikTok and Instagram rarely share one, so Scout reads flags and places from the bio (marked &ldquo;from bio&rdquo;).</p>
               </fieldset>
 
               {languageCounts.length > 1 && (
@@ -565,7 +615,9 @@ export default function Home() {
                         </td>
                         <td className="country">
                           {c.country ? <><span aria-hidden="true">{flag(c.country)}</span> {countryName(c.country)}</> : <span className="muted">Not listed</span>}
+                          {c.countrySource === "bio" && <span className="lang">from bio</span>}
                           {c.language && c.language !== "en" && <span className="lang">Posts in {languageName(c.language)}</span>}
+                          {c.gender !== "unknown" && <span className="lang">{GENDER_LABEL[c.gender]}{c.genderSource ? ` · ${c.genderSource === "you" ? "set by you" : `from ${c.genderSource === "name" ? "name" : "bio"}`}` : ""}</span>}
                         </td>
                         <td className="num">{compact(c.followers)}</td>
                         <td className="num">{compact(c.avgViews)}</td>
@@ -601,6 +653,15 @@ export default function Home() {
           basis={basis}
           starred={shortlist.has(open.id)}
           onToggleStar={() => toggleShortlist(open.id)}
+          onSetGender={(g) => {
+            setGenderFix((cur) => {
+              const next = { ...cur };
+              if (g === null) delete next[open.id]; else next[open.id] = g;
+              save(GENDER_STORE, next);
+              return next;
+            });
+          }}
+          estimated={creators.find((c) => c.id === open.id)?.gender ?? "unknown"}
           onClose={() => setOpenId(null)}
         />
       )}

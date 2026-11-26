@@ -278,3 +278,27 @@ test("access levels", () => {
   assert.equal(access("nope", { SCOUT_PASSWORD: "pw" }), "denied");
   assert.equal(access("pw", {}), "denied");
 });
+
+test("region: TikTok searches through that country, Instagram adds local hashtags", async () => {
+  const { hashtagsFor } = await import("./apify.ts");
+  assert.equal(buildInput("tiktok", "discover", { query: "fashion", limit: 10, region: "ZA" }).proxyCountryCode, "ZA");
+  assert.equal(buildInput("tiktok", "profiles", { limit: 10, handles: ["a"], region: "ZA" }).proxyCountryCode, "ZA");
+  assert.equal(buildInput("tiktok", "discover", { query: "fashion", limit: 10 }).proxyCountryCode, undefined);
+  assert.deepEqual(hashtagsFor("fashion", "ZA"), ["fashionsouthafrica", "southafricafashion", "fashionsa", "safashion"]);
+});
+
+test("spend cap grows with the search but never passes the ceiling", async () => {
+  const { runCap } = await import("./apify.ts");
+  assert.ok(runCap("tiktok", "profiles", 10, 2) < runCap("tiktok", "profiles", 50, 2));
+  assert.ok(runCap("tiktok", "profiles", 50, 2) <= 2);
+  assert.equal(runCap("tiktok", "profiles", 500, 2), 2);
+  assert.ok(runCap("instagram", "discover", 1, 2) >= 0.1);
+});
+
+test("TikTok creators get a country from their bio when the platform gives none", () => {
+  const out = normalizeTikTok([{ authorMeta: { name: "lebo", nickName: "Lerato", fans: 20_000, signature: "Joburg 🇿🇦 | she/her" }, playCount: 9000, diggCount: 500, commentCount: 9 }]);
+  assert.equal(out[0].country, "ZA");
+  assert.equal(out[0].countrySource, "bio");
+  assert.equal(out[0].gender, "woman");
+  assert.equal(out[0].genderSource, "pronouns");
+});

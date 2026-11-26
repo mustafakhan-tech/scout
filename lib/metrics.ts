@@ -1,4 +1,6 @@
 import type { Creator, Platform, CountrySource, Post } from "./types.ts";
+import { guessGender } from "./gender.ts";
+import { countryFromBio } from "./place.ts";
 import {
   bioMentionsManager, breakoutScore, captionLooksSponsored, daysSince, looksLikeBusiness, lowReachForSize, maturePosts, momentumOf, newestFirst,
   postsPerWeekOf,
@@ -86,12 +88,17 @@ export function buildCreator(input: CreatorInput): Creator {
 
   const erFollowers = interactions !== null && followers ? interactions / followers : null;
   const erViews = interactions !== null && avgViews ? interactions / avgViews : null;
-  const country = input.country ? input.country.toUpperCase() : null;
   const bio = (input.bio ?? "").trim();
+  // The platform's own country wins; otherwise use what the creator says in their bio.
+  const given = input.country ? input.country.toUpperCase() : null;
+  const fromBio = given || input.sample ? null : countryFromBio(bio);
+  const country = given ?? fromBio;
 
   const momentum = momentumOf(maturePosts(posts, input.platform, input.now));
   const reach = avgViews !== null && followers ? avgViews / followers : null;
   const daysSinceLastPost = daysSince(posts[0]?.date ?? null, input.now);
+  const business = looksLikeBusiness(bio, { seller: input.seller });
+  const gender = guessGender({ name: input.name || input.handle, bio, business });
 
   return {
     id: `${input.platform}:${input.handle.toLowerCase()}`,
@@ -102,7 +109,7 @@ export function buildCreator(input: CreatorInput): Creator {
     avatar: input.avatar ?? null,
     bio,
     country,
-    countrySource: country ? input.countrySource ?? "profile" : null,
+    countrySource: given ? input.countrySource ?? "profile" : fromBio ? "bio" : null,
     language: input.language ? input.language.toLowerCase().slice(0, 2) : null,
     followers,
     posts,
@@ -117,7 +124,9 @@ export function buildCreator(input: CreatorInput): Creator {
     breakout: breakoutScore({ platform: input.platform, momentum, reach, followers, daysSinceLastPost }),
     brandDeals: posts.filter((p) => p.sponsored).length,
     managed: bioMentionsManager(`${bio} ${input.contactText ?? ""}`),
-    business: looksLikeBusiness(bio, { seller: input.seller }),
+    business,
+    gender: gender.gender,
+    genderSource: gender.source,
     lowReach: lowReachForSize(reach, followers),
     daysSinceLastPost,
     postsPerWeek: postsPerWeekOf(posts),

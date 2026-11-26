@@ -20,8 +20,12 @@ function seededRandom(seed: string): () => number {
   };
 }
 
-const FIRST = ["ka", "mi", "ro", "ze", "lu", "an", "te", "sa", "jo", "ni", "da", "ve", "or", "pa", "li", "em"];
-const SECOND = ["ra", "lo", "na", "vi", "den", "sha", "ko", "rin", "mo", "tel", "bie", "ya", "lex", "ndo"];
+// Common first names only: no surnames, no photos, so no sample creator stands for a real person.
+const FIRST_NAMES = [
+  "maya", "zanele", "lerato", "chioma", "sofia", "amara", "jade", "priya", "nadia", "leah", "naledi", "ngozi", "elena", "grace",
+  "thabo", "marcus", "daniel", "kwame", "omar", "ethan", "sipho", "lucas", "ryan", "emeka",
+  "thando", "alex", "jordan", "sam", "mpho", "riley",
+];
 const SUFFIX = ["daily", "hq", "studio", "notes", "lab", "club", "diaries", "talks", "works"];
 const SAMPLE_COUNTRIES = ["US", "US", "US", "CA", "CA", "GB", "GB", "AU", "ZA", "NG", "IN", "AE", "DE", "PH"];
 const BIOS = [
@@ -81,7 +85,7 @@ export function sampleCreators(query: string, platforms: Platform[], perPlatform
     const p = PROFILE[platform];
     const used = new Set<string>();
     for (let i = 0; i < perPlatform; i++) {
-      const first = pick(r, FIRST) + pick(r, SECOND);
+      const first = pick(r, FIRST_NAMES);
       const name = first[0].toUpperCase() + first.slice(1);
       let handle = r() < 0.5 ? `${topic}with${first}` : `${first}.${pick(r, SUFFIX)}`;
       if (used.has(handle)) handle = `${handle}${i}`;
@@ -113,7 +117,9 @@ export function sampleCreators(query: string, platforms: Platform[], perPlatform
       });
 
       const bioRoll = r();
-      const bioTemplate = bioRoll < 0.18 ? pick(r, MANAGED_BIOS) : bioRoll < 0.26 ? pick(r, SHOP_BIOS) : pick(r, BIOS);
+      const pronounRoll = r();
+      const pronouns = pronounRoll < 0.12 ? " she/her" : pronounRoll < 0.18 ? " he/him" : "";
+      const bioTemplate = (bioRoll < 0.18 ? pick(r, MANAGED_BIOS) : bioRoll < 0.26 ? pick(r, SHOP_BIOS) : pick(r, BIOS)) + pronouns;
       const country = region && r() < 0.55 ? region : pick(r, SAMPLE_COUNTRIES);
       out.push(
         buildCreator({

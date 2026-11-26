@@ -21,6 +21,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ platform
   const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 20, 1), 50);
   const query = (url.searchParams.get("q") ?? "").slice(0, 100);
   const from = url.searchParams.get("from");
+  const regionParam = url.searchParams.get("region");
+  const region = regionParam && /^[A-Z]{2}$/.test(regionParam) ? regionParam : null;
   const env = process.env;
 
   try {
@@ -34,8 +36,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ platform
         return NextResponse.json({ status: "done", creators: [], message: "No TikTok videos came back for this niche." } satisfies JobResponse);
       }
       // Instagram with no hashtag results falls back to account search inside the profiles stage.
-      const nextId = await startRun(platform, "profiles", { query, limit, handles: found.handles }, env);
-      const next: Job = { platform, runId: nextId, stage: "profiles", from: runId, limit, query };
+      const nextId = await startRun(platform, "profiles", { query, limit, handles: found.handles, region }, env);
+      const next: Job = { platform, runId: nextId, stage: "profiles", from: runId, limit, query, region };
       return NextResponse.json({ status: "running", creators: [], next } satisfies JobResponse);
     }
 

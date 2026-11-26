@@ -36,7 +36,9 @@ Every creator in Scout has a **Check a deal** button that opens it prefilled. Th
 
 ## What it does
 
-- **Searches by niche** on one, two or all three platforms, with an optional region.
+- **Searches by niche** on one, two or all three platforms, with an optional region. Picking a region runs TikTok's search through a connection in that country and points Instagram at local hashtags (for South Africa: #fashionsouthafrica, #safashion and similar), then keeps only creators from there.
+- **Reads where a creator is from.** When a platform doesn't say, Scout reads the bio for flags, cities and "based in" lines (🇿🇦, Joburg, Cape Town, Mzansi) and marks the country "from bio".
+- **Filters by gender.** Scout estimates gender from pronouns in the bio, then words like "mom" or "girl dad", then the first name. It never looks at photos. Business accounts and unclear names stay "can't tell", and you can correct any creator by hand.
 - **Measures recent performance.** Scout reads each creator's latest posts (10 on YouTube, 8 on Instagram, 6 on TikTok) and averages their views, likes and comments, so you're comparing how accounts perform now, not just how big they are.
 - **Gives two engagement rates.** Likes plus comments per post, divided either by followers (the usual Instagram measure) or by views (better for TikTok and YouTube, where reach doesn't depend on followers).
 - **Puts a histogram on every filter.** Each slider shows how the current results are spread out, so you can see where the mid-tier creators cluster before you set a range.
@@ -48,8 +50,8 @@ Every creator in Scout has a **Check a deal** button that opens it prefilled. Th
 | Platform | Source | How creators are found | Country comes from |
 |---|---|---|---|
 | YouTube | Official YouTube Data API v3 | Videos about the niche from the past year, ranked by channel | The channel's own profile setting |
-| TikTok | Apify `clockworks/tiktok-scraper` | Video search, then the top authors' latest videos | Where their videos were posted |
-| Instagram | Apify `apify/instagram-scraper` | Posts on the niche's hashtags, then the top accounts' profiles (falls back to account search) | The business address, when there is one |
+| TikTok | Apify `clockworks/tiktok-scraper` | Video search (through the chosen region's connection), then the top authors' latest videos | Where their videos were posted, else the bio |
+| Instagram | Apify `apify/instagram-scraper` | Posts on the niche's hashtags (regional hashtags when a region is set), then the top accounts' profiles | The business address, else the bio |
 
 Searching posts first, then profiles, matters: searching accounts directly mostly matches usernames, which surfaces shops and dead accounts instead of people actively making the content.
 
@@ -69,7 +71,7 @@ Measured on real searches, 10 creators per platform:
 | Instagram | about $0.08 | about 1 minute |
 | TikTok | about $0.30 | about 1 minute |
 
-Apify's free plan includes $5 of usage a month, which covers roughly 12–15 full three-platform searches. Each Apify run is capped at `APIFY_MAX_CHARGE_USD` (50¢ by default), so a bad input can't run up a bill.
+TikTok costs about 3¢ per creator and Instagram under 1¢, so 50 TikTok creators is about $1.65. Scout shows the estimate under the Search button before you run it. Apify's free plan includes $5 of usage a month; start with 10–20 per platform. Each run's spend cap scales with the number of creators asked for, up to `APIFY_MAX_CHARGE_USD` ($2 by default), so a bad input can't run up a bill.
 
 ## Setup
 
