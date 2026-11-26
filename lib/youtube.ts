@@ -1,5 +1,7 @@
 import { buildCreator, toNum, type PostInput } from "./metrics.ts";
 import type { Creator } from "./types.ts";
+import { countryFromBio, countryFromText } from "./place.ts";
+import { countryName } from "./countries.ts";
 
 const API = "https://www.googleapis.com/youtube/v3";
 const RECENT_VIDEOS = 10;
@@ -71,32 +73,55 @@ async function videoDetails(ids: string[], key: string): Promise<VideoItem[]> {
  */
 export async function searchYouTube(query: string, limit: number, region: string | null, key: string): Promise<Creator[]> {
   const after = new Date(Date.now() - LOOKBACK_DAYS * 86_400_000).toISOString();
-  const search = await yt<{ items: Array<{ snippet: { channelId: string } }> }>(
-    "search",
-    {
-      part: "snippet",
-      type: "video",
-      q: query,
-      order: "relevance",
-      publishedAfter: after,
-      maxResults: "50",
-      ...(region ? { regionCode: region } : {}),
-    },
-    key,
-  );
-  const ids = rankChannels(search.items.map((i) => i.snippet.channelId).filter(Boolean), Math.min(Math.max(limit, 1), 50));
-  if (ids.length === 0) return [];
+  type Hit = { snippet: { channelId: string; title?: string; description?: string } };
+  const find = (q: string) =>
+    yt<{ items: Hit[] }>(
+      "search",
+      { part: "snippet", type: "video", q, order: "relevance", publishedAfter: after, maxResults: "50", ...(region ? { regionCode: region } : {}) },
+      key,
+    ).then((r) => r.items ?? []);
+  const want = Math.min(Math.max(limit, 1), 50);
+
+  // regionCode only nudges YouTube's results, so a region also searches "<niche> <country>".
+  const hits = region ? (await Promise.all([find(`${query} ${countryName(region)}`), find(query)])).flat() : await find(query);
+  const ranked = rankChannels(hits.map((i) => i.snippet.channelId).filter(Boolean), region ? 50 : want);
+  if (ranked.length === 0) return [];
 
   const channels: ChannelItem[] = [];
-  for (const group of chunk(ids, 50)) {
+  for (const group of chunk(ranked, 50)) {
     const res = await yt<{ items: ChannelItem[] }>("channels", { part: "snippet,statistics,contentDetails", id: group.join(","), maxResults: "50" }, key);
     channels.push(...(res.items ?? []));
   }
-  channels.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+  channels.sort((a, b) => ranked.indexOf(a.id) - ranked.indexOf(b.id));
+
+  // With a region: channels clearly from there first, then ones that could be, never ones from elsewhere.
+  const hintFor = new Map<string, string>();
+  let chosen = channels;
+  if (region) {
+    const placeOf = (ch: ChannelItem): string | null => {
+      if (ch.snippet.country) return ch.snippet.country;
+      const fromBio = countryFromBio(ch.snippet.description ?? "");
+      if (fromBio) return fromBio;
+      const titles = hits.filter((h) => h.snippet.channelId === ch.id).map((h) => `${h.snippet.title ?? ""} ${h.snippet.description ?? ""}`);
+      return titles.map((t) => countryFromText(t)).find(Boolean) ?? null;
+    };
+    const local: ChannelItem[] = [];
+    const maybe: ChannelItem[] = [];
+    for (const ch of channels) {
+      const at = placeOf(ch);
+      if (at === region) {
+        local.push(ch);
+        // Bio-based countries are read again (and labelled "from bio") when the creator is built.
+        if (!ch.snippet.country && !countryFromBio(ch.snippet.description ?? "")) hintFor.set(ch.id, at);
+      }
+      else if (!at) maybe.push(ch);
+    }
+    chosen = [...local, ...maybe].slice(0, want);
+  }
 
   const uploadsByChannel = new Map<string, string[]>();
   await Promise.all(
-    channels.map(async (ch) => {
+    chosen.map(async (ch) => {
       const playlist = ch.contentDetails?.relatedPlaylists?.uploads;
       if (!playlist) return;
       try {
@@ -117,7 +142,7 @@ export async function searchYouTube(query: string, limit: number, region: string
     for (const v of await videoDetails(group, key)) byId.set(v.id, v);
   }
 
-  return channels.map((ch) => {
+  return chosen.map((ch) => {
     const handle = ch.snippet.customUrl?.replace(/^@/, "") || ch.id;
     const videos = (uploadsByChannel.get(ch.id) ?? []).map((id) => byId.get(id)).filter((v): v is VideoItem => Boolean(v));
     const posts: PostInput[] = videos.map((v) => ({
@@ -137,8 +162,8 @@ export async function searchYouTube(query: string, limit: number, region: string
       url: ch.snippet.customUrl ? `https://www.youtube.com/${ch.snippet.customUrl}` : `https://www.youtube.com/channel/${ch.id}`,
       avatar: ch.snippet.thumbnails?.default?.url ?? null,
       bio: ch.snippet.description,
-      country: ch.snippet.country ?? null,
-      countrySource: "profile",
+      country: ch.snippet.country ?? hintFor.get(ch.id) ?? null,
+      countrySource: ch.snippet.country ? "profile" : "posts",
       language: (langs[0] as string | undefined) ?? ch.snippet.defaultLanguage ?? null,
       followers: ch.statistics.hiddenSubscriberCount ? null : toNum(ch.statistics.subscriberCount),
       posts,
