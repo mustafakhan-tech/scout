@@ -110,7 +110,8 @@ export function buildCreator(input: CreatorInput): Creator {
     bio,
     country,
     countrySource: given ? input.countrySource ?? "profile" : fromBio ? "bio" : null,
-    language: input.language ? input.language.toLowerCase().slice(0, 2) : null,
+    // "un", "und" and "zxx" are platforms saying they couldn't tell.
+    language: input.language && !/^(un|und|zxx)$/i.test(input.language) ? input.language.toLowerCase().slice(0, 2) : null,
     followers,
     posts,
     postsSampled: posts.length,
