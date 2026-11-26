@@ -36,3 +36,11 @@ test("first name ignores emoji and handles accents", () => {
   assert.equal(firstName("Zoë Martin"), "zoe");
   assert.equal(firstName("🍵"), null);
 });
+
+test("titles and surname-first names", () => {
+  assert.equal(nameGender("Hey, Ms Khatli"), "woman");
+  assert.equal(nameGender("Mr Dlamini"), "man");
+  assert.equal(nameGender("Mtebele Thuli"), "woman");
+  assert.equal(nameGender("Khensani"), "woman");
+  assert.equal(nameGender("Cee King"), "unknown");
+});
